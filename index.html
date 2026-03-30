@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DIAC Staff Hub</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+        body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
+        .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        // --- CONFIGURATION ---
+        const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyLzmtnWErPtRP2_UFL7WmBZpc1D4PE2bLZ-PHkpKpRg42vNyZlHXLZc2_P578uIlW9/exec";
+        const STUDENT_SHEET = "Student App Data";
+        const SCHEDULE_SHEET = "Daily Schedule";
+
+        const getDirectDriveUrl = (url) => {
+            if (!url) return null;
+            const stringUrl = String(url);
+            if (stringUrl.includes('drive.google.com')) {
+                let fileId = '';
+                if (stringUrl.includes('id=')) {
+                    fileId = stringUrl.split('id=')[1].split('&')[0];
+                } else if (stringUrl.includes('/file/d/')) {
+                    fileId = stringUrl.split('/file/d/')[1].split('/')[0];
+                }
+                if (fileId) return `https://lh3.googleusercontent.com/d/${fileId}=s400`;
+            }
+            return stringUrl;
+        };
+
+        const formatCleanDate = (dateStr) => {
+            if (!dateStr) return "";
+            const str = String(dateStr);
+            return str.split(/[T ]/)[0];
+        };
+
+        const formatGrade = (gradeStr) => {
+            if (!gradeStr) return "";
+            return String(gradeStr).trim();
+        };
+
+        const Icon = ({ name, size = 24, className = "" }) => {
+            return <i data-lucide={name} style={{ width: size, height: size }} className={className}></i>;
+        };
+
+        function App() {
+            const [activeTab, setActiveTab] = useState('students');
+            const [searchQuery, setSearchQuery] = useState('');
+            const [students, setStudents] = useState([]);
+            const [schedule, setSchedule] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [error, setError] = useState(null);
+            const [selectedStudent, setSelectedStudent] = useState(null);
+            const [refreshing, setRefreshing] = useState(false);
+
+            const fetchData = async () => {
+                setRefreshing(true);
+                setError(null);
+                try {
+                    const [stuRes, schRes] = await Promise.all([
+                        fetch(`${SCRIPT_URL}?action=students`, { method: 'GET' }),
+                        fetch(`${SCRIPT_URL}?action=schedule`, { method: 'GET' })
+                    ]);
+                    
+                    if (!stuRes.ok || !schRes.ok) throw new Error("Network response was not ok");
+
+                    const stuData = await stuRes.json();
+                    const schData = await schRes.json();
+                    
+                    if (stuData && stuData.error) {
+                        throw new Error(stuData.error);
+                    }
+                    
+                    setStudents(Array.isArray(stuData) ? stuData : []);
+                    setSchedule(Array.isArray(schData) ? schData : []);
+                } catch (err) {
+                    console.error("Fetch error:", err);
+                    setError(err.message);
+                } finally {
+                    setLoading(false);
+                    setRefreshing(false);
+                    setTimeout(() => lucide.createIcons(), 150);
+                }
+            };
+
+            useEffect(() => { 
+                fetchData();
+            }, []);
+
+            useEffect(() => {
+                lucide.createIcons();
+            }, [selectedStudent, activeTab, students]);
+
+            const processedStudents = useMemo(() => {
+                if (!Array.isArray(students)) return [];
+                return students.map((s, index) => ({
+                    uid: index, 
+                    lastName: s.b || "",             // Column B
+                    displayName: s.ab || "Unknown Student", // Column AB
+                    id: s.c || "N/A",                // Column C
+                    dob: formatCleanDate(s.d),        // Column D
+                    pronouns: s.f || "",             // Column F
+                    cabin: s.g || "Unassigned",      // Column G
+                    grade: formatGrade(s.m),         // Column M
+                    school: s.n || "",               // Column N
+                    photoUrl: s.o || "",             // Column O
+                    dietary: s.p || "",              // Column P
+                    allergies: s.q || "",            // Column Q
+                    emergency: {
+                        name: `${s.h || ''} ${s.i || ''}`.trim() || "Not Provided", // Columns H, I
+                        phone: s.j || "",            // Column J
+                        email: s.l || ""             // Column L
+                    },
+                    sessions: [
+                        { id: 1, activity: s.r, venue: s.s }, // R, S
+                        { id: 2, activity: s.t, venue: s.u }, // T, U
+                        { id: 3, activity: s.v, venue: s.w }, // V, W
+                        { id: 4, activity: s.x, venue: s.y }  // X, Y
+                    ]
+                })).sort((a, b) => (a.lastName || "").localeCompare(b.lastName || ""));
+            }, [students]);
+
+            const filteredStudents = useMemo(() => {
+                const query = searchQuery.toLowerCase();
+                return processedStudents.filter(s => 
+                    (s.displayName || "").toLowerCase().includes(query) ||
+                    (s.cabin || "").toString().toLowerCase().includes(query) ||
+                    (s.school || "").toLowerCase().includes(query)
+                );
+            }, [processedStudents, searchQuery]);
+
+            const InfoBlock = ({ label, value, icon, color = "text-slate-700" }) => {
+                if (!value || value === "N/A" || value === "" || value === " ") return null;
+                return (
+                    <div className="py-3 border-b border-slate-100 last:border-0">
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.15em] mb-1">{label}</p>
+                        <div className="flex items-start gap-3">
+                            {icon && <Icon name={icon} size={16} className="mt-0.5 text-slate-400 flex-shrink-0" />}
+                            <p className={`text-sm font-semibold break-words ${color}`}>{value}</p>
+                        </div>
+                    </div>
+                );
+            };
+
+            if (loading) return (
+                <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white">
+                    <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+                    <p className="text-sm font-bold uppercase tracking-widest animate-pulse">Connecting to DIAC Database...</p>
+                </div>
+            );
+
+            if (error) return (
+                <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center">
+                    <div className="w-16 h-16 bg-rose-100 text-rose-500 rounded-full flex items-center justify-center mb-4">
+                        <Icon name="alert-circle" size={32} />
+                    </div>
+                    <h2 className="text-xl font-bold text-slate-900 mb-2">Sync Error</h2>
+                    <p className="text-slate-500 text-sm mb-6 max-w-sm leading-relaxed">{error}</p>
+                    <div className="flex flex-col gap-3 w-full max-w-xs mx-auto">
+                        <button onClick={fetchData} className="bg-indigo-600 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-indigo-200 active:scale-95 transition-transform">Retry Connection</button>
+                    </div>
+                </div>
+            );
+
+            if (selectedStudent) {
+                return (
+                    <div className="min-h-screen bg-white pb-20 animate-fade-in">
+                        <header className="bg-slate-900 text-white p-5 sticky top-0 z-50 flex items-center gap-4">
+                            <button onClick={() => setSelectedStudent(null)} className="p-2 -ml-2 hover:bg-slate-800 rounded-full transition-colors">
+                                <Icon name="chevron-left" />
+                            </button>
+                            <h1 className="text-lg font-bold truncate">{selectedStudent.displayName}</h1>
+                        </header>
+
+                        <div className="max-w-2xl mx-auto p-6 space-y-8">
+                            <div className="flex flex-col items-center text-center pb-6 border-b border-slate-100">
+                                <div className="w-32 h-32 rounded-3xl overflow-hidden shadow-xl border-4 border-white ring-1 ring-slate-200 mb-4 bg-slate-100 flex items-center justify-center">
+                                    {selectedStudent.photoUrl ? (
+                                        <img src={getDirectDriveUrl(selectedStudent.photoUrl)} className="w-full h-full object-cover" onError={(e) => { e.target.style.display='none'; e.target.parentElement.innerHTML='<i data-lucide="user" class="text-slate-300 w-12 h-12"></i>'; lucide.createIcons(); }} />
+                                    ) : <Icon name="user" size={48} className="text-slate-300" />}
+                                </div>
+                                <h2 className="text-2xl font-black text-slate-900 leading-tight">{selectedStudent.displayName}</h2>
+                                <div className="flex flex-wrap justify-center gap-2 mt-3">
+                                    <span className="text-[10px] font-black text-slate-500 bg-slate-100 px-3 py-1.5 rounded-lg uppercase tracking-wider">Cabin {selectedStudent.cabin}</span>
+                                    {selectedStudent.grade && <span className="text-[10px] font-black text-slate-500 bg-slate-100 px-3 py-1.5 rounded-lg uppercase tracking-wider">{selectedStudent.grade}</span>}
+                                    {selectedStudent.pronouns && <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-lg uppercase tracking-wider">{selectedStudent.pronouns}</span>}
+                                </div>
+                            </div>
+
+                            <section>
+                                <h3 className="text-[11px] font-black text-slate-900 uppercase tracking-[0.2em] mb-3 flex items-center gap-2">
+                                    <span className="w-2 h-2 bg-indigo-500 rounded-full"></span> Personal Profile
+                                </h3>
+                                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                                    <InfoBlock label="School" value={selectedStudent.school} icon="school" />
+                                    <InfoBlock label="Student ID" value={selectedStudent.id} icon="id-card" />
+                                    <InfoBlock label="Birthdate" value={selectedStudent.dob} icon="calendar" />
+                                </div>
+                            </section>
+
+                            {(selectedStudent.dietary || selectedStudent.allergies) && (
+                                <section>
+                                    <h3 className="text-[11px] font-black text-rose-600 uppercase tracking-[0.2em] mb-3 flex items-center gap-2">
+                                        <span className="w-2 h-2 bg-rose-500 rounded-full"></span> Health & Safety
+                                    </h3>
+                                    <div className="bg-rose-50 border border-rose-100 p-4 rounded-2xl">
+                                        <InfoBlock label="Allergies" value={selectedStudent.allergies} icon="alert-triangle" color="text-rose-700" />
+                                        <InfoBlock label="Dietary" value={selectedStudent.dietary} icon="heart" color="text-rose-700" />
+                                    </div>
+                                </section>
+                            )}
+
+                            <section>
+                                <h3 className="text-[11px] font-black text-slate-900 uppercase tracking-[0.2em] mb-3 flex items-center gap-2">
+                                    <span className="w-2 h-2 bg-emerald-500 rounded-full"></span> Emergency Contact
+                                </h3>
+                                <div className="bg-emerald-50/50 border border-emerald-100 p-4 rounded-2xl">
+                                    <InfoBlock label="Guardian" value={selectedStudent.emergency.name} icon="user" />
+                                    <InfoBlock label="Phone" value={selectedStudent.emergency.phone} icon="phone" />
+                                    <InfoBlock label="Email" value={selectedStudent.emergency.email} icon="mail" />
+                                </div>
+                            </section>
+
+                            <section>
+                                <h3 className="text-[11px] font-black text-slate-900 uppercase tracking-[0.2em] mb-3 flex items-center gap-2">
+                                    <span className="w-2 h-2 bg-amber-500 rounded-full"></span> Program Schedule
+                                </h3>
+                                <div className="space-y-3">
+                                    {selectedStudent.sessions.map((p, idx) => (
+                                        <div key={idx} className="bg-white border border-slate-200 p-4 rounded-2xl shadow-sm flex items-center gap-4">
+                                            <div className="w-10 h-10 bg-amber-100 text-amber-700 flex-shrink-0 flex items-center justify-center rounded-xl font-black text-sm">S{p.id}</div>
+                                            <div className="flex-1 min-w-0">
+                                                <div className="font-bold text-slate-900 leading-tight truncate">{p.activity || "No Activity"}</div>
+                                                <div className="text-[10px] text-slate-400 font-bold uppercase mt-1 flex items-center gap-1">
+                                                    <Icon name="map-pin" size={10} /> {p.venue || 'TBA'}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </section>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="min-h-screen bg-slate-50 pb-24">
+                    <header className="bg-slate-900 text-white p-5 sticky top-0 z-50 shadow-lg">
+                        <div className="max-w-2xl mx-auto flex justify-between items-center">
+                            <div>
+                                <h1 className="text-xl font-black italic tracking-tighter">DIAC HUB</h1>
+                                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest flex items-center gap-2">
+                                    <span className={`w-1.5 h-1.5 rounded-full ${refreshing ? 'bg-amber-400 animate-spin' : 'bg-emerald-400 animate-pulse'}`}></span>
+                                    {refreshing ? 'Syncing...' : `${processedStudents.length} Students Sync'd`}
+                                </p>
+                            </div>
+                            <button onClick={fetchData} className={`p-2 bg-slate-800 rounded-xl active:bg-slate-700 transition-colors ${refreshing ? 'animate-spin' : ''}`}>
+                                <Icon name="refresh-cw" size={18}/>
+                            </button>
+                        </div>
+                    </header>
+
+                    <main className="max-w-2xl mx-auto p-4 space-y-4">
+                        {activeTab === 'students' ? (
+                            <>
+                                <div className="relative group">
+                                    <Icon name="search" size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
+                                    <input 
+                                        type="text" 
+                                        placeholder="Search name, cabin, school..." 
+                                        className="w-full bg-white border border-slate-200 py-4 pl-12 pr-4 rounded-2xl shadow-sm outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-sm font-medium"
+                                        value={searchQuery} 
+                                        onChange={(e) => setSearchQuery(e.target.value)} 
+                                    />
+                                </div>
+                                <div className="grid gap-2">
+                                    {filteredStudents.map((s) => (
+                                        <button key={s.uid} onClick={() => setSelectedStudent(s)} className="bg-white p-3 rounded-2xl border border-slate-100 flex items-center justify-between shadow-sm active:scale-[0.98] transition-all text-left w-full group hover:border-indigo-100">
+                                            <div className="flex items-center gap-4">
+                                                <div className="w-14 h-14 rounded-2xl overflow-hidden bg-slate-50 flex-shrink-0 border border-slate-100 flex items-center justify-center">
+                                                    {s.photoUrl ? (
+                                                        <img src={getDirectDriveUrl(s.photoUrl)} className="w-full h-full object-cover" onError={(e) => { e.target.style.display='none'; e.target.parentElement.innerHTML='<i data-lucide="user" class="text-slate-200 w-6 h-6"></i>'; lucide.createIcons(); }} />
+                                                    ) : <Icon name="user" className="text-slate-200" />}
+                                                </div>
+                                                <div className="min-w-0">
+                                                    <div className="font-bold text-slate-900 leading-tight group-hover:text-indigo-600 transition-colors truncate">{s.displayName}</div>
+                                                    <div className="text-[10px] text-slate-500 mt-1 font-bold uppercase tracking-wider">
+                                                        Cabin {s.cabin} • {s.school || 'DIAC'}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <Icon name="chevron-right" size={18} className="text-slate-300 mr-2 group-hover:text-indigo-400 transition-colors" />
+                                        </button>
+                                    ))}
+                                    {filteredStudents.length === 0 && students.length > 0 && (
+                                        <div className="text-center py-12 text-slate-400">
+                                            <Icon name="search" size={32} className="mx-auto mb-2 opacity-20" />
+                                            <p className="text-xs font-bold uppercase tracking-widest">No matching results</p>
+                                        </div>
+                                    )}
+                                    {students.length === 0 && !loading && !error && (
+                                        <div className="text-center py-20 bg-white rounded-3xl border border-dashed border-slate-200">
+                                            <Icon name="database" size={40} className="mx-auto mb-4 text-slate-200" />
+                                            <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">No Data Found</p>
+                                            <p className="text-[10px] text-slate-300 mt-1 px-10 leading-relaxed">Ensure tabs "{STUDENT_SHEET}" and "{SCHEDULE_SHEET}" exist in your sheet.</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </>
+                        ) : (
+                            <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden animate-fade-in">
+                                {schedule.map((item, i) => (
+                                    <div key={i} className="p-5 flex gap-5 border-b border-slate-50 last:border-0 hover:bg-slate-50 transition-colors">
+                                        <div className="text-indigo-600 font-black text-xs min-w-[80px] pt-1 uppercase tracking-tighter">{item.time}</div>
+                                        <div className="min-w-0">
+                                            <div className="font-bold text-slate-900 text-base leading-tight">{item.event}</div>
+                                            <div className="text-[10px] text-slate-400 font-bold uppercase mt-1 flex items-center gap-1">
+                                                <Icon name="map-pin" size={10} /> {item.location}
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                                {schedule.length === 0 && (
+                                    <div className="p-10 text-center text-slate-400 text-xs font-bold uppercase tracking-widest">No schedule data available</div>
+                                )}
+                            </div>
+                        )}
+                    </main>
+
+                    <nav className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-lg border-t border-slate-100 p-3 flex justify-around safe-bottom z-50">
+                        <button onClick={() => {setActiveTab('students'); setSelectedStudent(null);}} className={`flex flex-col items-center gap-1 w-1/2 transition-colors ${activeTab === 'students' ? 'text-indigo-600' : 'text-slate-400'}`}>
+                            <div className={`p-2 rounded-xl ${activeTab === 'students' ? 'bg-indigo-50' : ''}`}><Icon name="users" size={20} /></div>
+                            <span className="text-[9px] font-black uppercase tracking-widest">Roster</span>
+                        </button>
+                        <button onClick={() => {setActiveTab('schedule'); setSelectedStudent(null);}} className={`flex flex-col items-center gap-1 w-1/2 transition-colors ${activeTab === 'schedule' ? 'text-indigo-600' : 'text-slate-400'}`}>
+                            <div className={`p-2 rounded-xl ${activeTab === 'schedule' ? 'bg-indigo-50' : ''}`}><Icon name="calendar" size={20} /></div>
+                            <span className="text-[9px] font-black uppercase tracking-widest">Schedule</span>
+                        </button>
+                    </nav>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
