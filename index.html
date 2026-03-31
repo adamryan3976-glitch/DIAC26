@@ -5,21 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>DIAC Staff Hub</title>
    
-    <!-- FAVICON & APP ICONS - UPDATED TO CORRECT REPO -->
     <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/adamryan3976-glitch/DIAC26/main/diaclogo.png">
     <link rel="apple-touch-icon" href="https://raw.githubusercontent.com/adamryan3976-glitch/DIAC26/main/diaclogo.png">
    
-    <!-- iOS Web App Meta -->
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="DIAC Hub">
-
 
     <script src="https://cdn.tailwindcss.com"></script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://unpkg.com/@lucide/lab"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Gaegu:wght@400;700&display=swap');
@@ -31,11 +27,8 @@
             overflow-x: hidden;
         }
 
-
         .whimsical-font { font-family: 'Gaegu', cursive; }
 
-
-        /* Paint Splotches */
         .paint-splotch {
             position: fixed;
             z-index: -1;
@@ -44,83 +37,50 @@
             pointer-events: none;
         }
 
-
         .splotch-1 { top: -5%; left: -5%; width: 300px; height: 300px; background: #6366f1; border-radius: 45% 55% 70% 30% / 30% 40% 60% 70%; }
         .splotch-2 { bottom: 10%; right: -10%; width: 250px; height: 250px; background: #f43f5e; border-radius: 70% 30% 30% 70% / 60% 40% 60% 40%; }
-        .splotch-3 { top: 40%; left: 10%; width: 150px; height: 150px; background: #fbbf24; border-radius: 50%; opacity: 0.1; }
 
-
-        .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
-       
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
        
-        input { font-size: 16px !important; }
-
-
-        .art-card {
-            border-radius: 24px 8px 24px 8px;
-        }
-
-
-        .logo-placeholder {
-            background-color: #ffffff;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
+        input, select { font-size: 16px !important; }
+        .art-card { border-radius: 24px 8px 24px 8px; }
+        .logo-placeholder { background-color: #ffffff; display: flex; align-items: center; justify-content: center; }
     </style>
 </head>
 <body class="text-slate-900">
     <div class="paint-splotch splotch-1"></div>
     <div class="paint-splotch splotch-2"></div>
-    <div class="paint-splotch splotch-3"></div>
-
 
     <div id="root"></div>
-
 
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
-
-        const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxhItS7qPYq98U2AlS-abawps-boJ1LF7reEUutsfAgdprCN9wh3fibwk4UurNXZ7n4/exec";
-       
-        // CORRECTED URL based on your GitHub location
+        // UPDATED SCRIPT URL
+        const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwQoftfxLs0EUVnKJ6i3zSuNGuY0vuyL2XzUFBXLSXMd2QmZSb13_xAc4GSg1MJlZOV/exec";
         const APP_LOGO_URL = "https://raw.githubusercontent.com/adamryan3976-glitch/DIAC26/main/diaclogo.png";
-
 
         const getDirectDriveUrl = (url) => {
             if (!url) return null;
-            const stringUrl = String(url);
-            if (stringUrl.includes('drive.google.com')) {
-                let fileId = '';
-                if (stringUrl.includes('id=')) {
-                    fileId = stringUrl.split('id=')[1].split('&')[0];
-                } else if (stringUrl.includes('/file/d/')) {
-                    fileId = stringUrl.split('/file/d/')[1].split('/')[0];
-                }
-                if (fileId) return `https://lh3.googleusercontent.com/d/${fileId}=s400`;
+            const s = String(url);
+            if (s.includes('drive.google.com')) {
+                let id = s.includes('id=') ? s.split('id=')[1].split('&')[0] : s.split('/file/d/')[1].split('/')[0];
+                return `https://lh3.googleusercontent.com/d/${id}=s400`;
             }
-            return stringUrl;
+            return s;
         };
-
-
-        const formatCleanDate = (dateStr) => dateStr ? String(dateStr).split(/[T ]/)[0] : "";
-        const formatGrade = (gradeStr) => gradeStr ? String(gradeStr).trim() : "";
-
 
         const Icon = ({ name, size = 24, className = "" }) => (
             <i data-lucide={name} style={{ width: size, height: size }} className={className}></i>
         );
 
-
         function App() {
             const [isAuthenticated, setIsAuthenticated] = useState(false);
+            const [isHoc, setIsHoc] = useState(false);
             const [loginData, setLoginData] = useState({ user: '', pass: '' });
             const [loginError, setLoginError] = useState('');
             const [isLoggingIn, setIsLoggingIn] = useState(false);
-
 
             const [activeTab, setActiveTab] = useState('students');
             const [searchQuery, setSearchQuery] = useState('');
@@ -131,17 +91,25 @@
             const [selectedCabin, setSelectedCabin] = useState(null);
             const [refreshing, setRefreshing] = useState(false);
 
+            // Attendance/HOC states
+            const [classes, setClasses] = useState({ S1:[], S2:[], S3:[], S4:[] });
+            const [attStudents, setAttStudents] = useState([]);
+            const [absences, setAbsences] = useState([]);
+            const [selectedSession, setSelectedSession] = useState('S1');
+            const [selectedClass, setSelectedClass] = useState('');
+            const [actionLoading, setActionLoading] = useState(false);
 
             useEffect(() => {
                 const savedUser = localStorage.getItem('diac_auth_user');
+                const savedHoc = localStorage.getItem('diac_auth_hoc');
                 if (savedUser) {
                     setIsAuthenticated(true);
+                    setIsHoc(savedHoc === 'true');
                     fetchData();
                 } else {
                     setLoading(false);
                 }
             }, []);
-
 
             const handleLogin = async (e) => {
                 e.preventDefault();
@@ -150,42 +118,45 @@
                 try {
                     const res = await fetch(`${SCRIPT_URL}?action=login&user=${encodeURIComponent(loginData.user)}&pass=${encodeURIComponent(loginData.pass)}`);
                     const result = await res.json();
-                   
                     if (result.success) {
                         localStorage.setItem('diac_auth_user', loginData.user);
+                        localStorage.setItem('diac_auth_hoc', result.isHoc);
                         setIsAuthenticated(true);
+                        setIsHoc(result.isHoc);
                         fetchData();
                     } else {
                         setLoginError('Invalid username or password.');
                     }
                 } catch (err) {
-                    setLoginError('Connection error. Please check your internet.');
+                    setLoginError('Connection error.');
                 } finally {
                     setIsLoggingIn(false);
                 }
             };
 
-
             const handleLogout = () => {
-                localStorage.removeItem('diac_auth_user');
+                localStorage.clear();
                 setIsAuthenticated(false);
-                setStudents([]);
+                window.location.reload();
             };
-
 
             const fetchData = async () => {
                 setRefreshing(true);
                 try {
-                    const [stuRes, schRes] = await Promise.all([
-                        fetch(`${SCRIPT_URL}?action=students`),
-                        fetch(`${SCRIPT_URL}?action=schedule`)
+                    const [stu, sch, cls, att, abs] = await Promise.all([
+                        fetch(`${SCRIPT_URL}?action=students`).then(r => r.json()),
+                        fetch(`${SCRIPT_URL}?action=schedule`).then(r => r.json()),
+                        fetch(`${SCRIPT_URL}?action=getClasses`).then(r => r.json()),
+                        fetch(`${SCRIPT_URL}?action=getAttendanceList`).then(r => r.json()),
+                        fetch(`${SCRIPT_URL}?action=getAbsences`).then(r => r.json())
                     ]);
-                    const stuData = await stuRes.json();
-                    const schData = await schRes.json();
-                    setStudents(Array.isArray(stuData) ? stuData : []);
-                    setSchedule(Array.isArray(schData) ? schData : []);
+                    setStudents(stu);
+                    setSchedule(sch);
+                    setClasses(cls);
+                    setAttStudents(att);
+                    setAbsences(abs);
                 } catch (err) {
-                    console.error("Sync error:", err);
+                    console.error(err);
                 } finally {
                     setLoading(false);
                     setRefreshing(false);
@@ -193,48 +164,48 @@
                 }
             };
 
+            const markAbsent = async (student) => {
+                setActionLoading(true);
+                try {
+                    const reporter = localStorage.getItem('diac_auth_user');
+                    const masterStu = processedStudents.find(ps => ps.displayName === student.name);
+                    const cabin = masterStu ? masterStu.cabin : "N/A";
 
-            useEffect(() => {
-                lucide.createIcons();
-            }, [selectedStudent, selectedCabin, activeTab, students, isAuthenticated]);
+                    await fetch(`${SCRIPT_URL}?action=markAbsent&studentName=${encodeURIComponent(student.name)}&session=${selectedSession}&activity=${encodeURIComponent(selectedClass)}&reportedBy=${encodeURIComponent(reporter)}&cabin=${encodeURIComponent(cabin)}`);
+                    await fetchData();
+                } catch (e) {
+                    console.error(e);
+                } finally {
+                    setActionLoading(false);
+                }
+            };
 
+            const clearAbsence = async (id) => {
+                setActionLoading(true);
+                try {
+                    await fetch(`${SCRIPT_URL}?action=clearAbsence&id=${id}`);
+                    await fetchData();
+                } catch (e) {
+                    console.error(e);
+                } finally {
+                    setActionLoading(false);
+                }
+            };
+
+            useEffect(() => { lucide.createIcons(); }, [selectedStudent, selectedCabin, activeTab, students, isAuthenticated, selectedSession, selectedClass]);
 
             const processedStudents = useMemo(() => {
                 if (!Array.isArray(students)) return [];
-                return students.map((s, index) => {
-                    const fullName = s.ab || "Unknown Student";
-                    const names = fullName.trim().split(' ');
-                    const lastName = names.length > 1 ? names[names.length - 1] : fullName;
-
-
-                    return {
-                        uid: index,
-                        displayName: fullName,
-                        lastName: lastName,
-                        id: s.c || "N/A",
-                        dob: formatCleanDate(s.d),
-                        pronouns: s.f || "",
-                        cabin: s.g || "Unassigned",
-                        grade: formatGrade(s.m),
-                        school: s.n || "",
-                        photoUrl: s.o || "",
-                        dietary: s.p || "",
-                        allergies: s.q || "",
-                        sessions: [
-                            { id: 1, activity: s.r, venue: s.s },
-                            { id: 2, activity: s.t, venue: s.u },
-                            { id: 3, activity: s.v, venue: s.w },
-                            { id: 4, activity: s.x, venue: s.y }
-                        ],
-                        emergency: {
-                            name: `${s.h || ''} ${s.i || ''}`.trim() || "Not Provided",
-                            phone: s.j || s.k || "",
-                            email: s.l || ""
-                        }
-                    };
-                }).sort((a, b) => a.lastName.localeCompare(b.lastName));
+                return students.map((s, index) => ({
+                    uid: index, displayName: s.ab, id: s.c, dob: s.d, pronouns: s.f, cabin: s.g || "Unassigned",
+                    grade: s.m, school: s.n, photoUrl: s.o, dietary: s.p, allergies: s.q,
+                    sessions: [
+                        { id: 1, activity: s.r, venue: s.s }, { id: 2, activity: s.t, venue: s.u },
+                        { id: 3, activity: s.v, venue: s.w }, { id: 4, activity: s.x, venue: s.y }
+                    ],
+                    emergency: { name: `${s.h || ''} ${s.i || ''}`.trim(), phone: s.k, email: s.l }
+                })).sort((a, b) => a.displayName.localeCompare(b.displayName));
             }, [students]);
-
 
             const cabins = useMemo(() => {
                 const groups = {};
@@ -246,7 +217,6 @@
                 return Object.keys(groups).sort().map(name => ({ name, count: groups[name].length, students: groups[name] }));
             }, [processedStudents]);
 
-
             const filteredStudents = useMemo(() => {
                 const q = searchQuery.toLowerCase();
                 return processedStudents.filter(s =>
@@ -256,230 +226,125 @@
                 );
             }, [processedStudents, searchQuery]);
 
+            const classAttendanceList = useMemo(() => {
+                if (!selectedClass) return [];
+                return attStudents.filter(s => s[selectedSession] === selectedClass);
+            }, [selectedClass, selectedSession, attStudents]);
 
             if (!isAuthenticated) return (
                 <div className="min-h-screen flex items-center justify-center p-6 relative">
                     <div className="w-full max-w-sm animate-fade-in relative z-10">
                         <div className="text-center mb-8">
-                            <div className="w-32 h-32 bg-white rounded-[40px] flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-indigo-500/20 overflow-hidden rotate-3 hover:rotate-0 transition-transform duration-500 border-4 border-indigo-100 p-4 logo-placeholder">
-                                <img
-                                    src={APP_LOGO_URL}
-                                    alt="DIAC Logo"
-                                    className="w-full h-full object-contain"
-                                    crossOrigin="anonymous"
-                                    onError={(e) => {
-                                        e.target.onerror = null;
-                                        e.target.src = "https://via.placeholder.com/150/FFFFFF/6366f1?text=DIAC";
-                                    }}
-                                />
+                            <div className="w-32 h-32 bg-white rounded-[40px] flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-indigo-500/20 overflow-hidden logo-placeholder border-4 border-indigo-100 p-4">
+                                <img src={APP_LOGO_URL} alt="DIAC" className="w-full h-full object-contain" />
                             </div>
-                            <h1 className="text-3xl font-black text-indigo-600 tracking-tight uppercase whimsical-font">DIAC STAFF HUB</h1>
-                            <p className="text-slate-500 text-[10px] mt-1 font-black tracking-[0.2em] uppercase">Durham Immersive Arts Camp</p>
+                            <h1 className="text-3xl font-black text-indigo-600 whimsical-font uppercase">DIAC STAFF HUB</h1>
                         </div>
-
-
                         <form onSubmit={handleLogin} className="space-y-4">
                             <div className="relative">
                                 <Icon name="user" size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                                <input
-                                    type="text"
-                                    placeholder="Username"
-                                    required
-                                    className="w-full bg-white border-2 border-slate-100 text-slate-900 py-4 pl-12 pr-4 rounded-2xl outline-none focus:border-indigo-400 transition-all shadow-sm"
-                                    value={loginData.user}
-                                    onChange={e => setLoginData({...loginData, user: e.target.value})}
-                                />
+                                <input type="text" placeholder="Username" required className="w-full bg-white border-2 border-slate-100 py-4 pl-12 pr-4 rounded-2xl outline-none focus:border-indigo-400" value={loginData.user} onChange={e => setLoginData({...loginData, user: e.target.value})} />
                             </div>
                             <div className="relative">
                                 <Icon name="lock" size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                                <input
-                                    type="password"
-                                    placeholder="Password"
-                                    required
-                                    className="w-full bg-white border-2 border-slate-100 text-slate-900 py-4 pl-12 pr-4 rounded-2xl outline-none focus:border-indigo-400 transition-all shadow-sm"
-                                    value={loginData.pass}
-                                    onChange={e => setLoginData({...loginData, pass: e.target.value})}
-                                />
+                                <input type="password" placeholder="Password" required className="w-full bg-white border-2 border-slate-100 py-4 pl-12 pr-4 rounded-2xl outline-none focus:border-indigo-400" value={loginData.pass} onChange={e => setLoginData({...loginData, pass: e.target.value})} />
                             </div>
-                            {loginError && (
-                                <div className="bg-rose-500/10 border border-rose-500/20 text-rose-500 text-xs font-bold py-3 px-4 rounded-xl text-center">
-                                    {loginError}
-                                </div>
-                            )}
-                            <button
-                                type="submit"
-                                disabled={isLoggingIn}
-                                className="w-full bg-indigo-600 hover:bg-indigo-50 text-white font-black py-4 rounded-2xl shadow-lg shadow-indigo-600/30 active:scale-[0.98] transition-all flex items-center justify-center gap-3 uppercase tracking-wider"
-                            >
-                                {isLoggingIn ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> : 'ENTER THE HUB'}
+                            {loginError && <div className="text-rose-500 text-xs font-bold text-center">{loginError}</div>}
+                            <button type="submit" disabled={isLoggingIn} className="w-full bg-indigo-600 text-white font-black py-4 rounded-2xl shadow-lg uppercase">
+                                {isLoggingIn ? 'Verifying...' : 'Enter Hub'}
                             </button>
                         </form>
                     </div>
                 </div>
             );
 
-
             if (loading) return (
                 <div className="min-h-screen bg-white flex flex-col items-center justify-center text-slate-900">
                     <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-                    <p className="text-[10px] font-black uppercase tracking-[0.3em] text-indigo-600 animate-pulse whimsical-font text-lg">Mixing Colors...</p>
+                    <p className="whimsical-font text-lg text-indigo-600">Mixing Colors...</p>
                 </div>
             );
-
 
             const InfoBlock = ({ label, value, icon, color = "text-slate-700" }) => {
                 if (!value || value === "N/A" || value === "" || value === " ") return null;
                 return (
                     <div className="py-3 border-b border-slate-100 last:border-0">
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.15em] mb-1">{label}</p>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">{label}</p>
                         <div className="flex items-start gap-3">
-                            {icon && <Icon name={icon} size={16} className="mt-0.5 text-slate-400 flex-shrink-0" />}
+                            {icon && <Icon name={icon} size={16} className="mt-0.5 text-slate-400" />}
                             <p className={`text-sm font-semibold break-words ${color}`}>{value}</p>
                         </div>
                     </div>
                 );
             };
 
-
-            if (selectedStudent) {
-                return (
-                    <div className="min-h-screen bg-white pb-20 animate-fade-in relative">
-                        <header className="bg-indigo-600 text-white p-5 sticky top-0 z-50 flex items-center gap-4 shadow-md">
-                            <button onClick={() => setSelectedStudent(null)} className="p-2 -ml-2 active:bg-indigo-700 rounded-full transition-colors"><Icon name="chevron-left" /></button>
-                            <h1 className="text-lg font-bold truncate whimsical-font tracking-wide">{selectedStudent.displayName}</h1>
-                        </header>
-                        <div className="max-w-2xl mx-auto p-6 space-y-8 relative z-10">
-                            <div className="flex flex-col items-center text-center">
-                                <div className="w-32 h-32 rounded-[32px] overflow-hidden shadow-xl border-4 border-white ring-8 ring-indigo-50 mb-4 bg-slate-50 flex items-center justify-center rotate-2">
-                                    {selectedStudent.photoUrl ? <img src={getDirectDriveUrl(selectedStudent.photoUrl)} className="w-full h-full object-cover" crossOrigin="anonymous" /> : <Icon name="user" size={48} className="text-slate-200" />}
-                                </div>
-                                <h2 className="text-3xl font-black text-slate-900 whimsical-font">{selectedStudent.displayName}</h2>
-                                <div className="flex gap-2 mt-3">
-                                    <span className="text-[10px] font-black bg-amber-100 text-amber-700 px-3 py-1.5 rounded-full uppercase tracking-wider">Cabin {selectedStudent.cabin}</span>
-                                    {selectedStudent.pronouns && <span className="text-[10px] font-black bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-full uppercase tracking-wider">{selectedStudent.pronouns}</span>}
-                                </div>
+            if (selectedStudent) return (
+                <div className="min-h-screen bg-white pb-20 animate-fade-in relative">
+                    <header className="bg-indigo-600 text-white p-5 sticky top-0 z-50 flex items-center gap-4">
+                        <button onClick={() => setSelectedStudent(null)} className="p-2 -ml-2"><Icon name="chevron-left" /></button>
+                        <h1 className="text-lg font-bold truncate whimsical-font">{selectedStudent.displayName}</h1>
+                    </header>
+                    <div className="max-w-2xl mx-auto p-6 space-y-6">
+                        <div className="flex flex-col items-center text-center">
+                            <div className="w-32 h-32 rounded-[32px] overflow-hidden shadow-xl border-4 border-white mb-4 bg-slate-50 flex items-center justify-center">
+                                {selectedStudent.photoUrl ? <img src={getDirectDriveUrl(selectedStudent.photoUrl)} className="w-full h-full object-cover" /> : <Icon name="user" size={48} className="text-slate-200" />}
                             </div>
-                           
-                            <section>
-                                <h3 className="text-[11px] font-black text-indigo-500 uppercase tracking-widest mb-3 flex items-center gap-2 whimsical-font text-lg">
-                                    <Icon name="palette" size={16} /> Student Profile
-                                </h3>
-                                <div className="bg-white p-5 rounded-3xl border-2 border-indigo-50 shadow-sm art-card">
-                                    <InfoBlock label="School" value={selectedStudent.school} icon="school" />
-                                    <InfoBlock label="Birthdate" value={selectedStudent.dob} icon="calendar" />
-                                </div>
-                            </section>
-
-
-                            {(selectedStudent.dietary || selectedStudent.allergies) && (
-                                <section>
-                                    <h3 className="text-[11px] font-black text-rose-500 uppercase tracking-widest mb-3 flex items-center gap-2 whimsical-font text-lg">
-                                        <Icon name="heart" size={16} /> Health & Wellness
-                                    </h3>
-                                    <div className="bg-white border-2 border-rose-50 p-5 rounded-3xl shadow-sm art-card">
-                                        <InfoBlock label="Dietary" value={selectedStudent.dietary} icon="utensils" color="text-rose-600" />
-                                        <InfoBlock label="Allergies" value={selectedStudent.allergies} icon="alert-circle" color="text-rose-600" />
-                                    </div>
-                                </section>
-                            )}
-
-
-                            <section>
-                                <h3 className="text-[11px] font-black text-emerald-500 uppercase tracking-widest mb-3 flex items-center gap-2 whimsical-font text-lg">
-                                    <Icon name="phone" size={16} /> Contact
-                                </h3>
-                                <div className="bg-white border-2 border-emerald-50 p-5 rounded-3xl shadow-sm art-card">
-                                    <InfoBlock label="Guardian" value={selectedStudent.emergency.name} icon="user" />
-                                    <InfoBlock label="Phone" value={selectedStudent.emergency.phone} icon="phone" />
-                                    <InfoBlock label="Email" value={selectedStudent.emergency.email} icon="mail" />
-                                </div>
-                            </section>
-
-
-                            <section>
-                                <h3 className="text-[11px] font-black text-amber-500 uppercase tracking-widest mb-3 flex items-center gap-2 whimsical-font text-lg">
-                                    <Icon name="calendar-days" size={16} /> Program Schedule
-                                </h3>
-                                <div className="space-y-3">
-                                    {selectedStudent.sessions.map((session) => (
-                                        <div key={session.id} className="flex gap-4 p-4 bg-white border-2 border-amber-50 rounded-2xl shadow-sm art-card">
-                                            <div className="w-10 h-10 bg-amber-100 text-amber-700 rounded-xl flex items-center justify-center font-black text-sm flex-shrink-0">
-                                                S{session.id}
-                                            </div>
-                                            <div className="flex-1 min-w-0">
-                                                <p className="font-bold text-slate-900 truncate">{session.activity || "No Activity Selected"}</p>
-                                                <div className="flex items-center gap-1.5 text-slate-400 mt-1">
-                                                    <Icon name="map-pin" size={12} />
-                                                    <p className="text-[11px] font-bold uppercase tracking-wide truncate">{session.venue || "TBA"}</p>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </section>
+                            <h2 className="text-3xl font-black whimsical-font">{selectedStudent.displayName}</h2>
+                            <div className="flex gap-2 mt-2">
+                                <span className="text-[10px] font-black bg-amber-100 text-amber-700 px-3 py-1 rounded-full uppercase">Cabin {selectedStudent.cabin}</span>
+                            </div>
                         </div>
-                    </div>
-                );
-            }
-
-
-            if (selectedCabin) {
-                return (
-                    <div className="min-h-screen bg-slate-50 pb-20 animate-fade-in">
-                        <header className="bg-indigo-600 text-white p-5 sticky top-0 z-50 flex items-center gap-4 shadow-md">
-                            <button onClick={() => setSelectedCabin(null)} className="p-2 -ml-2 active:bg-indigo-700 rounded-full transition-colors"><Icon name="chevron-left" /></button>
-                            <h1 className="text-lg font-bold whimsical-font tracking-widest">Cabin {selectedCabin.name}</h1>
-                        </header>
-                        <main className="max-w-2xl mx-auto p-4 space-y-2">
-                            {selectedCabin.students.map(s => (
-                                <button key={s.uid} onClick={() => setSelectedStudent(s)} className="bg-white p-3 rounded-2xl border-2 border-slate-100 flex items-center justify-between w-full shadow-sm active:scale-95 transition-all text-left group hover:border-indigo-200">
-                                    <div className="flex items-center gap-4">
-                                        <div className="w-12 h-12 rounded-2xl bg-indigo-50 overflow-hidden border border-indigo-100 flex items-center justify-center group-hover:rotate-3 transition-transform">
-                                            {s.photoUrl ? <img src={getDirectDriveUrl(s.photoUrl)} className="w-full h-full object-cover" crossOrigin="anonymous" /> : <Icon name="user" className="text-indigo-200" size={20} />}
-                                        </div>
-                                        <div className="font-bold text-slate-900 leading-tight group-hover:text-indigo-600">{s.displayName}</div>
+                        <section className="bg-white p-5 rounded-3xl border-2 border-slate-50 art-card shadow-sm">
+                            <InfoBlock label="School" value={selectedStudent.school} icon="school" />
+                            <InfoBlock label="Birthdate" value={selectedStudent.dob} icon="calendar" />
+                            <InfoBlock label="Pronouns" value={selectedStudent.pronouns} icon="user" />
+                        </section>
+                        {(selectedStudent.dietary || selectedStudent.allergies) && (
+                            <section className="bg-rose-50/30 p-5 rounded-3xl border-2 border-rose-100 art-card shadow-sm">
+                                <InfoBlock label="Dietary" value={selectedStudent.dietary} icon="utensils" color="text-rose-600" />
+                                <InfoBlock label="Allergies" value={selectedStudent.allergies} icon="alert-circle" color="text-rose-600" />
+                            </section>
+                        )}
+                        <section className="bg-emerald-50/30 p-5 rounded-3xl border-2 border-emerald-100 art-card shadow-sm">
+                            <InfoBlock label="Guardian" value={selectedStudent.emergency.name} icon="user" />
+                            <InfoBlock label="Phone" value={selectedStudent.emergency.phone} icon="phone" />
+                            <InfoBlock label="Email" value={selectedStudent.emergency.email} icon="mail" />
+                        </section>
+                        <section className="space-y-2">
+                            <h3 className="text-[10px] font-black uppercase text-amber-500 tracking-widest ml-4">Program Schedule</h3>
+                            {selectedStudent.sessions.map((s) => (
+                                <div key={s.id} className="flex gap-4 p-4 bg-white border-2 border-amber-50 rounded-2xl art-card shadow-sm">
+                                    <div className="w-10 h-10 bg-amber-100 text-amber-700 rounded-xl flex items-center justify-center font-black text-xs">S{s.id}</div>
+                                    <div className="flex-1 min-w-0">
+                                        <p className="font-bold text-slate-900 truncate">{s.activity || "None"}</p>
+                                        <p className="text-[10px] text-slate-400 font-bold uppercase truncate">{s.venue || "TBA"}</p>
                                     </div>
-                                    <Icon name="chevron-right" size={18} className="text-slate-300 mr-2 group-hover:text-indigo-400" />
-                                </button>
+                                </div>
                             ))}
-                        </main>
+                        </section>
                     </div>
-                );
-            }
-
+                </div>
+            );
 
             return (
                 <div className="min-h-screen pb-24">
                     <header className="bg-indigo-600 text-white p-5 sticky top-0 z-50 flex justify-between items-center shadow-xl">
                         <div className="flex items-center gap-3">
-                            <div className="bg-white p-1 rounded-xl shadow-inner -rotate-3 overflow-hidden logo-placeholder">
-                                <img
-                                    src={APP_LOGO_URL}
-                                    alt="Logo"
-                                    className="w-8 h-8 object-contain"
-                                    crossOrigin="anonymous"
-                                    onError={(e) => {
-                                        e.target.onerror = null;
-                                        e.target.src = "https://via.placeholder.com/150/FFFFFF/6366f1?text=DIAC";
-                                    }}
-                                />
+                            <div className="bg-white p-1 rounded-xl shadow-inner logo-placeholder">
+                                <img src={APP_LOGO_URL} alt="Logo" className="w-8 h-8 object-contain" />
                             </div>
-                            <div>
-                                <h1 className="text-xl font-black italic tracking-tighter leading-none whimsical-font">DIAC HUB</h1>
-                                <p className="text-[9px] text-indigo-200 font-bold uppercase tracking-[0.2em] mt-1">{refreshing ? 'Syncing Palette...' : `Inspiring ${processedStudents.length} Artists`}</p>
-                            </div>
+                            <h1 className="text-xl font-black whimsical-font tracking-tighter">DIAC HUB</h1>
                         </div>
                         <div className="flex gap-2">
-                            <button onClick={fetchData} className="p-2 bg-indigo-500 rounded-xl active:scale-90 transition-all border border-indigo-400 shadow-inner"><Icon name="refresh-cw" size={18} className={refreshing ? 'animate-spin' : ''}/></button>
-                            <button onClick={handleLogout} className="p-2 bg-indigo-500 rounded-xl text-rose-300 active:scale-90 transition-all border border-indigo-400 shadow-inner"><Icon name="log-out" size={18}/></button>
+                            <button onClick={fetchData} className="p-2 bg-indigo-500 rounded-xl active:scale-90"><Icon name="refresh-cw" size={18} className={refreshing ? 'animate-spin' : ''}/></button>
+                            <button onClick={handleLogout} className="p-2 bg-indigo-500 rounded-xl active:scale-90"><Icon name="log-out" size={18}/></button>
                         </div>
                     </header>
 
-
                     <main className="max-w-2xl mx-auto p-4 space-y-4">
-                        <nav className="flex gap-2 mb-2 p-1 bg-white/50 backdrop-blur-sm rounded-2xl border border-white/50">
-                            {['students', 'cabins', 'schedule'].map(tab => (
-                                <button key={tab} onClick={() => setActiveTab(tab)} className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whimsical-font text-sm ${activeTab === tab ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'text-slate-400 hover:text-indigo-400'}`}>
+                        <nav className="flex gap-1 p-1 bg-white rounded-2xl border border-slate-100 overflow-x-auto">
+                            {['students', 'cabins', 'schedule', 'attendance', isHoc && 'hoc'].filter(Boolean).map(tab => (
+                                <button key={tab} onClick={() => setActiveTab(tab)} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whimsical-font text-sm flex-shrink-0 ${activeTab === tab ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}>
                                     {tab}
                                 </button>
                             ))}
@@ -489,82 +354,144 @@
                             <>
                                 <div className="relative">
                                     <Icon name="search" size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                                    <input
-                                        type="text"
-                                        placeholder="Find an artist..."
-                                        className="w-full bg-white border-2 border-slate-100 py-4 pl-12 pr-4 rounded-[24px] shadow-sm outline-none focus:border-indigo-300 transition-all text-sm font-medium"
-                                        value={searchQuery}
-                                        onChange={e => setSearchQuery(e.target.value)}
-                                    />
+                                    <input type="text" placeholder="Find an artist..." className="w-full bg-white border-2 border-slate-50 py-4 pl-12 pr-4 rounded-3xl shadow-sm outline-none" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
                                 </div>
                                 <div className="grid gap-2">
                                     {filteredStudents.map(s => (
-                                        <button key={s.uid} onClick={() => setSelectedStudent(s)} className="bg-white p-3 rounded-2xl border-2 border-slate-50 flex items-center justify-between w-full shadow-sm active:scale-95 transition-all text-left hover:border-indigo-100 group">
+                                        <button key={s.uid} onClick={() => setSelectedStudent(s)} className="bg-white p-3 rounded-2xl border-2 border-slate-50 flex items-center justify-between w-full shadow-sm text-left">
                                             <div className="flex items-center gap-4">
-                                                <div className="w-14 h-14 rounded-2xl bg-indigo-50 overflow-hidden border border-indigo-50 flex items-center justify-center group-hover:scale-105 transition-transform">
-                                                    {s.photoUrl ? <img src={getDirectDriveUrl(s.photoUrl)} className="w-full h-full object-cover" crossOrigin="anonymous" /> : <Icon name="user" className="text-indigo-200" size={24} />}
+                                                <div className="w-14 h-14 rounded-2xl bg-indigo-50 overflow-hidden flex items-center justify-center">
+                                                    {s.photoUrl ? <img src={getDirectDriveUrl(s.photoUrl)} className="w-full h-full object-cover" /> : <Icon name="user" className="text-indigo-200" size={24} />}
                                                 </div>
                                                 <div>
-                                                    <div className="font-bold text-slate-900 leading-tight group-hover:text-indigo-600">{s.displayName}</div>
-                                                    <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">Cabin {s.cabin} • {s.school || 'DDSB'}</div>
+                                                    <div className="font-bold text-slate-900 leading-tight">{s.displayName}</div>
+                                                    <div className="text-[10px] text-slate-400 font-bold uppercase mt-0.5">Cabin {s.cabin} • {s.school || 'DDSB'}</div>
                                                 </div>
                                             </div>
-                                            <Icon name="chevron-right" size={18} className="text-slate-300 mr-2 group-hover:text-indigo-400 transition-colors" />
+                                            <Icon name="chevron-right" size={18} className="text-slate-300 mr-2" />
                                         </button>
                                     ))}
                                 </div>
                             </>
                         )}
 
-
                         {activeTab === 'cabins' && (
-                            <div className="grid gap-4 animate-fade-in">
+                            <div className="grid gap-4">
                                 {cabins.map(cabin => (
-                                    <button key={cabin.name} onClick={() => setSelectedCabin(cabin)} className="bg-white p-5 rounded-[32px] border-2 border-slate-50 shadow-sm flex items-center justify-between w-full active:scale-95 transition-all text-left group hover:border-indigo-100 art-card">
+                                    <button key={cabin.name} onClick={() => setSelectedCabin(cabin)} className="bg-white p-5 rounded-[32px] border-2 border-slate-50 shadow-sm flex items-center justify-between w-full text-left art-card">
                                         <div className="flex items-center gap-5">
-                                            <div className="w-14 h-14 bg-amber-50 text-amber-600 rounded-[20px] flex items-center justify-center font-black text-lg group-active:bg-amber-500 group-active:text-white transition-all whimsical-font rotate-2 group-hover:rotate-0">{cabin.name.charAt(0)}</div>
+                                            <div className="w-14 h-14 bg-amber-50 text-amber-600 rounded-[20px] flex items-center justify-center font-black whimsical-font text-lg">{cabin.name.charAt(0)}</div>
                                             <div>
                                                 <h3 className="font-bold text-slate-900 text-lg whimsical-font tracking-wide">Cabin {cabin.name}</h3>
-                                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{cabin.count} Artists</p>
+                                                <p className="text-[10px] font-bold text-slate-400 uppercase">{cabin.count} Artists</p>
                                             </div>
                                         </div>
-                                        <Icon name="chevron-right" className="text-slate-300 group-hover:text-amber-400" />
+                                        <Icon name="chevron-right" className="text-slate-300" />
                                     </button>
                                 ))}
                             </div>
                         )}
 
-
                         {activeTab === 'schedule' && (
-                            <div className="bg-white rounded-[32px] border-2 border-slate-50 shadow-sm overflow-hidden animate-fade-in art-card">
-                                {schedule.length > 0 ? schedule.map((item, i) => (
-                                    <div key={i} className="p-5 flex gap-5 border-b border-slate-50 last:border-0 hover:bg-slate-50">
-                                        <div className="text-indigo-600 font-black text-xs min-w-[80px] pt-1 uppercase tracking-tighter whimsical-font text-sm">{item.time}</div>
+                            <div className="bg-white rounded-[32px] border-2 border-slate-50 shadow-sm overflow-hidden art-card">
+                                {schedule.map((item, i) => (
+                                    <div key={i} className="p-5 flex gap-5 border-b border-slate-50 last:border-0">
+                                        <div className="text-indigo-600 font-black text-sm uppercase whimsical-font min-w-[70px]">{item.time}</div>
                                         <div>
-                                            <div className="font-bold text-slate-900 text-base">{item.event}</div>
+                                            <div className="font-bold text-slate-900 text-base leading-tight">{item.event}</div>
                                             <div className="text-[10px] text-slate-400 font-bold uppercase mt-1 flex items-center gap-1"><Icon name="map-pin" size={10} /> {item.location}</div>
                                         </div>
                                     </div>
-                                )) : (
-                                    <div className="p-10 text-center text-slate-400 text-sm font-bold uppercase tracking-widest whimsical-font">No Creative Plans Yet</div>
-                                )}
+                                ))}
+                            </div>
+                        )}
+
+                        {activeTab === 'attendance' && (
+                            <div className="space-y-4 animate-fade-in">
+                                <div className="bg-white p-6 rounded-[32px] border-2 border-indigo-50 shadow-sm art-card space-y-4">
+                                    <h3 className="text-lg font-black whimsical-font text-indigo-600 flex items-center gap-2"><Icon name="clipboard-check" /> Session Attendance</h3>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <label className="text-[9px] font-black uppercase text-slate-400 block mb-1 ml-2">Period</label>
+                                            <select className="w-full bg-slate-50 border-2 border-slate-100 p-3 rounded-xl font-bold" value={selectedSession} onChange={e => { setSelectedSession(e.target.value); setSelectedClass(''); }}>
+                                                <option value="S1">S1</option><option value="S2">S2</option><option value="S3">S3</option><option value="S4">S4</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="text-[9px] font-black uppercase text-slate-400 block mb-1 ml-2">Class</label>
+                                            <select className="w-full bg-slate-50 border-2 border-slate-100 p-3 rounded-xl font-bold" value={selectedClass} onChange={e => setSelectedClass(e.target.value)}>
+                                                <option value="">Choose...</option>
+                                                {classes[selectedSession]?.map(c => <option key={c} value={c}>{c}</option>)}
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="space-y-2">
+                                    {selectedClass ? (
+                                        classAttendanceList.length > 0 ? classAttendanceList.map((s, i) => {
+                                            const isMarked = absences.some(a => a.name === s.name && a.session === selectedSession);
+                                            return (
+                                                <div key={i} className="bg-white p-4 rounded-2xl border-2 border-slate-50 flex items-center justify-between shadow-sm">
+                                                    <div>
+                                                        <div className="font-bold text-slate-900">{s.name}</div>
+                                                        <div className="text-[10px] text-slate-400 font-bold uppercase">{s[selectedSession + 'V'] || 'Venue TBA'}</div>
+                                                    </div>
+                                                    {isMarked ? (
+                                                        <span className="text-[10px] font-black bg-rose-100 text-rose-600 px-3 py-2 rounded-full uppercase">Reported Absent</span>
+                                                    ) : (
+                                                        <button disabled={actionLoading} onClick={() => markAbsent(s)} className="text-[10px] font-black bg-indigo-50 text-indigo-600 px-4 py-2 rounded-full uppercase active:scale-95">Mark Absent</button>
+                                                    )}
+                                                </div>
+                                            );
+                                        }) : <div className="p-10 text-center text-slate-400 whimsical-font">No artists in this class.</div>
+                                    ) : <div className="p-10 text-center text-slate-400 whimsical-font">Select a session and class to begin.</div>}
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'hoc' && (
+                            <div className="space-y-4 animate-fade-in">
+                                <div className="bg-indigo-600 p-6 rounded-[32px] text-white shadow-xl art-card">
+                                    <h3 className="text-xl font-black whimsical-font flex items-center gap-2"><Icon name="shield-alert" /> HOC Attendance List</h3>
+                                    <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-200">Missing Artists Tracker</p>
+                                </div>
+                                <div className="space-y-3">
+                                    {absences.length > 0 ? absences.map((abs) => (
+                                        <div key={abs.id} className="bg-white p-5 rounded-3xl border-2 border-rose-50 shadow-sm space-y-3 relative overflow-hidden">
+                                            <div className="absolute top-0 right-0 w-1.5 h-full bg-rose-500"></div>
+                                            <div className="flex justify-between items-start">
+                                                <div>
+                                                    <h4 className="font-black text-slate-900 text-lg whimsical-font">{abs.name}</h4>
+                                                    <p className="text-[10px] font-black text-rose-500 uppercase tracking-widest">Cabin {abs.cabin} • {abs.session}</p>
+                                                    <p className="text-[11px] font-bold text-slate-400 mt-1">{abs.activity}</p>
+                                                </div>
+                                                <button disabled={actionLoading} onClick={() => clearAbsence(abs.id)} className="bg-emerald-50 text-emerald-600 p-2 rounded-xl active:scale-95"><Icon name="check-circle" size={20} /></button>
+                                            </div>
+                                            <div className="flex justify-between items-center pt-3 border-t border-slate-50">
+                                                <span className="text-[9px] font-black text-slate-300 uppercase">By {abs.reporter}</span>
+                                                <span className="text-[9px] font-black text-slate-300 uppercase">{new Date(abs.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                            </div>
+                                        </div>
+                                    )) : (
+                                        <div className="p-16 text-center">
+                                            <div className="w-16 h-16 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mx-auto mb-4"><Icon name="check" size={32} /></div>
+                                            <p className="text-slate-400 font-bold uppercase tracking-widest whimsical-font">All Artists Safe</p>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         )}
                     </main>
                    
-                    <footer className="fixed bottom-0 left-0 w-full p-4 pointer-events-none flex justify-center z-40 safe-bottom">
-                        <div className="px-6 py-2 bg-indigo-600/10 backdrop-blur-md rounded-full border border-indigo-600/10 text-[9px] font-black uppercase text-indigo-600 tracking-[0.3em] whimsical-font">
-                            DIAC 2026
-                        </div>
+                    <footer className="fixed bottom-0 left-0 w-full p-4 pointer-events-none flex justify-center z-40">
+                        <div className="px-6 py-2 bg-indigo-600/10 backdrop-blur-md rounded-full border border-indigo-600/10 text-[9px] font-black uppercase text-indigo-600 tracking-[0.3em] whimsical-font">DIAC 2026</div>
                     </footer>
                 </div>
             );
         }
-
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
     </script>
 </body>
 </html>
-
