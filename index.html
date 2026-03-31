@@ -24,8 +24,8 @@
             font-family: 'Inter', sans-serif;
             -webkit-tap-highlight-color: transparent;
             background-color: #f8fafc;
-            overflow-x: hidden;
             margin: 0;
+            overflow-x: hidden;
         }
 
         .whimsical-font { font-family: 'Gaegu', cursive; }
@@ -33,18 +33,23 @@
         .paint-splotch {
             position: fixed;
             z-index: -1;
-            filter: blur(40px);
-            opacity: 0.15;
+            filter: blur(60px);
+            opacity: 0.1;
             pointer-events: none;
         }
 
-        .splotch-1 { top: -5%; left: -5%; width: 300px; height: 300px; background: #6366f1; border-radius: 45% 55% 70% 30% / 30% 40% 60% 70%; }
-        .splotch-2 { bottom: 10%; right: -10%; width: 250px; height: 250px; background: #f43f5e; border-radius: 70% 30% 30% 70% / 60% 40% 60% 40%; }
+        .splotch-1 { top: -10%; left: -10%; width: 350px; height: 350px; background: #6366f1; border-radius: 50%; }
+        .splotch-2 { bottom: -10%; right: -10%; width: 300px; height: 300px; background: #f43f5e; border-radius: 50%; }
 
-        .animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-fade-in { animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
        
         input { font-size: 16px !important; }
+        
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
     </style>
 </head>
 <body class="text-slate-900">
@@ -56,10 +61,10 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
-        const SCRIPT_URL = "https://script.google.com/macros/s/AKfycby0QvzsivrF70ibrKWCbf9ZDC2xG_tzNNrYNSKtbfsYmfe_bX_8jJCmornQO0xr14Ze/exec";
+        // UPDATED SCRIPT URL
+        const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzBTRjyceANwqUjX3OeAz4WvYsvRlHV66G0ijcCmxGuqlCWDh0vujAHXMZs8ua8-UkU/exec";
         const APP_LOGO_URL = "https://raw.githubusercontent.com/adamryan3976-glitch/DIAC26/main/diaclogo.png";
 
-        // Helper for Google Drive Images
         const getDirectDriveUrl = (url) => {
             if (!url) return null;
             const s = String(url);
@@ -70,7 +75,6 @@
             return s;
         };
 
-        // Icon component that triggers Lucide refresh
         const Icon = ({ name, size = 24, className = "" }) => {
             useEffect(() => {
                 if (window.lucide) window.lucide.createIcons();
@@ -93,7 +97,6 @@
             const [selectedStudent, setSelectedStudent] = useState(null);
             const [refreshing, setRefreshing] = useState(false);
 
-            // Initial Check
             useEffect(() => {
                 const savedUser = localStorage.getItem('diac_auth_user');
                 const savedHoc = localStorage.getItem('diac_auth_hoc');
@@ -113,10 +116,8 @@
                         fetch(`${SCRIPT_URL}?action=students`),
                         fetch(`${SCRIPT_URL}?action=schedule`)
                     ]);
-                    
                     const stu = await stuRes.json();
                     const sch = await schRes.json();
-                    
                     setStudents(Array.isArray(stu) ? stu : []);
                     setSchedule(Array.isArray(sch) ? sch : []);
                 } catch (err) {
@@ -131,26 +132,22 @@
                 e.preventDefault();
                 setIsLoggingIn(true);
                 setLoginError('');
-                
                 try {
-                    const user = loginData.user.trim();
-                    const pass = loginData.pass.trim();
-                    const url = `${SCRIPT_URL}?action=login&user=${encodeURIComponent(user)}&pass=${encodeURIComponent(pass)}`;
-                    
+                    const url = `${SCRIPT_URL}?action=login&user=${encodeURIComponent(loginData.user)}&pass=${encodeURIComponent(loginData.pass)}`;
                     const res = await fetch(url);
                     const result = await res.json();
                     
                     if (result && result.success) {
-                        localStorage.setItem('diac_auth_user', user.toLowerCase());
+                        localStorage.setItem('diac_auth_user', loginData.user.toLowerCase());
                         localStorage.setItem('diac_auth_hoc', result.isHoc);
                         setIsAuthenticated(true);
                         setIsHoc(result.isHoc);
                         fetchData();
                     } else {
-                        setLoginError(result.error || 'Invalid credentials.');
+                        setLoginError(result.error || 'Invalid username or password.');
                     }
                 } catch (err) {
-                    setLoginError('Server error. Deployment may be private.');
+                    setLoginError('Connection error. Ensure script is deployed as "Anyone".');
                 } finally {
                     setIsLoggingIn(false);
                 }
@@ -164,7 +161,7 @@
             const processedStudents = useMemo(() => {
                 return students.map((s, index) => ({
                     uid: index, 
-                    displayName: s.ab || "Unknown Artist", 
+                    displayName: s.ab || "Artist", 
                     id: s.c, 
                     cabin: s.g || "N/A",
                     school: s.n || "DIAC", 
@@ -182,16 +179,21 @@
                 );
             }, [processedStudents, searchQuery]);
 
-            // --- RENDER LOGIN ---
-            if (!isAuthenticated && !loading) return (
+            if (loading) return (
+                <div className="min-h-screen flex items-center justify-center bg-white">
+                    <div className="animate-spin rounded-full h-10 w-10 border-4 border-indigo-600 border-t-transparent"></div>
+                </div>
+            );
+
+            if (!isAuthenticated) return (
                 <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-slate-50 relative">
                     <div className="w-full max-w-sm animate-fade-in relative z-10">
                         <div className="text-center mb-10">
-                            <div className="w-20 h-20 bg-white rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-xl overflow-hidden border-2 border-white">
+                            <div className="w-24 h-24 bg-white rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-xl border-2 border-white overflow-hidden">
                                 <img src={APP_LOGO_URL} alt="DIAC" className="w-full h-full object-contain p-2" />
                             </div>
                             <h1 className="text-3xl font-black text-indigo-600 whimsical-font tracking-tighter italic uppercase">DIAC HUB</h1>
-                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-2">Staff Portal Login</p>
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-2">Staff Access Portal</p>
                         </div>
                         <form onSubmit={handleLogin} className="space-y-4">
                             <input 
@@ -213,40 +215,26 @@
                 </div>
             );
 
-            // --- RENDER LOADING ---
-            if (loading) return (
-                <div className="min-h-screen flex items-center justify-center bg-white">
-                    <div className="flex flex-col items-center">
-                        <div className="animate-spin rounded-full h-10 w-10 border-4 border-indigo-600 border-t-transparent mb-4"></div>
-                        <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Loading DIAC Hub</p>
-                    </div>
-                </div>
-            );
-
-            // --- RENDER PROFILE ---
             if (selectedStudent) return (
                 <div className="min-h-screen bg-white animate-fade-in">
                     <header className="bg-slate-900 text-white p-5 sticky top-0 z-50 flex items-center gap-4">
-                        <button onClick={() => setSelectedStudent(null)} className="p-2"><Icon name="arrow-left" /></button>
+                        <button onClick={() => setSelectedStudent(null)} className="p-2 active:bg-slate-800 rounded-xl transition-colors"><Icon name="arrow-left" /></button>
                         <h1 className="text-lg font-bold truncate whimsical-font">{selectedStudent.displayName}</h1>
                     </header>
-                    <div className="p-6 space-y-6 max-w-xl mx-auto">
+                    <div className="p-6 space-y-6 max-w-xl mx-auto pb-24">
                         <div className="flex flex-col items-center text-center">
-                            <div className="w-32 h-32 rounded-3xl overflow-hidden shadow-xl border-4 border-white mb-4 bg-slate-50 flex items-center justify-center">
+                            <div className="w-36 h-36 rounded-3xl overflow-hidden shadow-xl border-4 border-white mb-4 bg-slate-50 flex items-center justify-center">
                                 {selectedStudent.photoUrl ? <img src={getDirectDriveUrl(selectedStudent.photoUrl)} className="w-full h-full object-cover" /> : <Icon name="user" size={48} className="text-slate-200" />}
                             </div>
                             <h2 className="text-2xl font-black">{selectedStudent.displayName}</h2>
                             <span className="text-[10px] font-black bg-indigo-100 text-indigo-700 px-4 py-1.5 rounded-full uppercase mt-2">Cabin {selectedStudent.cabin}</span>
                         </div>
-                        <div className="bg-slate-50 p-5 rounded-3xl border border-slate-100">
-                             <div className="mb-4">
-                                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">School</p>
-                                <p className="font-bold text-slate-700">{selectedStudent.school}</p>
-                             </div>
+                        <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100 space-y-4">
+                             <div><p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Home School</p><p className="font-bold text-slate-700">{selectedStudent.school}</p></div>
                              {(selectedStudent.dietary || selectedStudent.allergies) && (
-                                <div className="mt-4 pt-4 border-t border-slate-200">
-                                    <p className="text-[9px] font-bold text-rose-500 uppercase tracking-widest mb-1 flex items-center gap-1"><Icon name="alert-circle" size={10}/> Alerts</p>
-                                    <p className="text-sm font-bold text-slate-600">{selectedStudent.dietary} {selectedStudent.allergies}</p>
+                                <div className="pt-4 border-t border-slate-200">
+                                    <p className="text-[9px] font-bold text-rose-500 uppercase tracking-widest mb-1 flex items-center gap-1"><Icon name="alert-circle" size={10}/> Medical / Dietary Alerts</p>
+                                    <p className="text-sm font-bold text-slate-600 leading-relaxed">{selectedStudent.dietary} {selectedStudent.allergies}</p>
                                 </div>
                              )}
                         </div>
@@ -254,17 +242,13 @@
                 </div>
             );
 
-            // --- RENDER MAIN APP ---
             return (
                 <div className="min-h-screen bg-slate-50 pb-24">
-                    <header className="bg-slate-900 text-white p-5 sticky top-0 z-50 flex justify-between items-center">
-                        <div>
-                            <h1 className="text-xl font-black whimsical-font italic">DIAC HUB</h1>
-                            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">{processedStudents.length} Artists On Site</p>
-                        </div>
+                    <header className="bg-slate-900 text-white p-5 sticky top-0 z-50 flex justify-between items-center shadow-md">
+                        <div><h1 className="text-xl font-black whimsical-font italic">DIAC HUB</h1><p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">{processedStudents.length} Artists On Site</p></div>
                         <div className="flex gap-2">
-                            <button onClick={fetchData} className="p-2 bg-slate-800 rounded-xl"><Icon name="refresh-cw" size={18} className={refreshing ? 'animate-spin' : ''}/></button>
-                            <button onClick={handleLogout} className="p-2 bg-slate-800 rounded-xl"><Icon name="log-out" size={18}/></button>
+                            <button onClick={fetchData} className="p-2 bg-slate-800 rounded-xl transition-colors"><Icon name="refresh-cw" size={18} className={refreshing ? 'animate-spin' : ''}/></button>
+                            <button onClick={handleLogout} className="p-2 bg-slate-800 rounded-xl transition-colors"><Icon name="log-out" size={18}/></button>
                         </div>
                     </header>
 
@@ -282,7 +266,7 @@
                                 </div>
                                 <div className="grid gap-2">
                                     {filteredStudents.length > 0 ? filteredStudents.map(s => (
-                                        <button key={s.uid} onClick={() => setSelectedStudent(s)} className="bg-white p-3 rounded-2xl border border-slate-100 flex items-center justify-between w-full shadow-sm active:scale-[0.98] text-left">
+                                        <button key={s.uid} onClick={() => setSelectedStudent(s)} className="bg-white p-3 rounded-2xl border border-slate-100 flex items-center justify-between w-full shadow-sm active:scale-[0.98] transition-all text-left">
                                             <div className="flex items-center gap-4">
                                                 <div className="w-12 h-12 rounded-xl bg-slate-50 flex items-center justify-center border border-slate-100 overflow-hidden">
                                                     {s.photoUrl ? <img src={getDirectDriveUrl(s.photoUrl)} className="w-full h-full object-cover" /> : <Icon name="user" className="text-slate-200" size={20} />}
@@ -295,7 +279,7 @@
                                             <Icon name="chevron-right" size={18} className="text-slate-300" />
                                         </button>
                                     )) : (
-                                        <div className="text-center p-10 text-slate-400 text-[10px] font-black uppercase tracking-widest">No matching artists</div>
+                                        <div className="text-center p-10 text-slate-400 text-[10px] font-black uppercase tracking-widest">No artists found</div>
                                     )}
                                 </div>
                             </div>
@@ -306,17 +290,20 @@
                                 {schedule.length > 0 ? schedule.map((item, i) => (
                                     <div key={i} className="p-5 flex gap-5 border-b border-slate-50 last:border-0">
                                         <div className="text-indigo-600 font-black text-sm uppercase whimsical-font min-w-[70px]">{item.time}</div>
-                                        <div>
-                                            <div className="font-bold text-slate-900 leading-tight">{item.event}</div>
-                                            <div className="text-[10px] text-slate-400 font-bold uppercase mt-1 flex items-center gap-1"><Icon name="map-pin" size={10} /> {item.location}</div>
-                                        </div>
+                                        <div><div className="font-bold text-slate-900 leading-tight">{item.event}</div><div className="text-[10px] text-slate-400 font-bold uppercase mt-1 flex items-center gap-1"><Icon name="map-pin" size={10} /> {item.location}</div></div>
                                     </div>
                                 )) : (
-                                    <div className="text-center p-10 text-slate-400 text-[10px] font-black uppercase tracking-widest">Schedule not loaded</div>
+                                    <div className="text-center p-10 text-slate-400 text-[10px] font-black uppercase tracking-widest">Creative Plans Loading...</div>
                                 )}
                             </div>
                         )}
                     </main>
+                    
+                    <footer className="fixed bottom-0 left-0 w-full p-4 pointer-events-none flex justify-center z-40 safe-bottom">
+                        <div className="px-6 py-2 bg-indigo-600/10 backdrop-blur-md rounded-full border border-indigo-600/10 text-[9px] font-black uppercase text-indigo-600 tracking-[0.3em] whimsical-font">
+                            DIAC 2026
+                        </div>
+                    </footer>
                 </div>
             );
         }
