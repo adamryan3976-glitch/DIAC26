@@ -18,6 +18,7 @@
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/@lucide/lab"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Gaegu:wght@400;700&display=swap');
@@ -233,11 +234,14 @@
                                     src={APP_LOGO_URL} 
                                     alt="DIAC Logo" 
                                     className="w-full h-full object-contain"
-                                    onError={(e) => { e.target.src = "https://via.placeholder.com/150?text=DIAC"; }}
+                                    onError={(e) => { 
+                                        e.target.onerror = null; 
+                                        e.target.src = "https://via.placeholder.com/150?text=DIAC"; 
+                                    }}
                                 />
                             </div>
                             <h1 className="text-3xl font-black text-indigo-600 tracking-tight uppercase whimsical-font">DIAC STAFF HUB</h1>
-                            <p className="text-slate-500 text-[10px] mt-1 font-black tracking-[0.2em] uppercase">Durham Immersive Arts Camp</p>
+                            <p className="text-slate-500 text-[10px] mt-1 font-black tracking-[0.2em] uppercase">Durham Integrated Arts Camp</p>
                         </div>
 
                         <form onSubmit={handleLogin} className="space-y-4">
@@ -411,7 +415,10 @@
                                     src={APP_LOGO_URL} 
                                     alt="Logo" 
                                     className="w-8 h-8 object-contain"
-                                    onError={(e) => { e.target.src = "https://via.placeholder.com/150?text=DIAC"; }}
+                                    onError={(e) => { 
+                                        e.target.onerror = null; 
+                                        e.target.src = "https://via.placeholder.com/150?text=DIAC"; 
+                                    }}
                                 />
                             </div>
                             <div>
