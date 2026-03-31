@@ -52,14 +52,20 @@
         
         input { font-size: 16px !important; }
 
-        /* Fun Rounded Corners */
         .art-card {
             border-radius: 24px 8px 24px 8px;
+        }
+
+        /* Ensure the logo container doesn't look empty while loading */
+        .logo-placeholder {
+            background-color: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
     </style>
 </head>
 <body class="text-slate-900">
-    <!-- Decorative Splotches -->
     <div class="paint-splotch splotch-1"></div>
     <div class="paint-splotch splotch-2"></div>
     <div class="paint-splotch splotch-3"></div>
@@ -70,6 +76,8 @@
         const { useState, useEffect, useMemo } = React;
 
         const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxhItS7qPYq98U2AlS-abawps-boJ1LF7reEUutsfAgdprCN9wh3fibwk4UurNXZ7n4/exec";
+        
+        // Ensure this URL matches your GitHub repo structure exactly
         const APP_LOGO_URL = "https://raw.githubusercontent.com/diac-dev/diac-staff-hub/main/diaclogo.png";
 
         const getDirectDriveUrl = (url) => {
@@ -229,19 +237,20 @@
                 <div className="min-h-screen flex items-center justify-center p-6 relative">
                     <div className="w-full max-w-sm animate-fade-in relative z-10">
                         <div className="text-center mb-8">
-                            <div className="w-32 h-32 bg-white rounded-[40px] flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-indigo-500/20 overflow-hidden rotate-3 hover:rotate-0 transition-transform duration-500 border-4 border-indigo-100 p-4">
+                            <div className="w-32 h-32 bg-white rounded-[40px] flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-indigo-500/20 overflow-hidden rotate-3 hover:rotate-0 transition-transform duration-500 border-4 border-indigo-100 p-4 logo-placeholder">
                                 <img 
                                     src={APP_LOGO_URL} 
                                     alt="DIAC Logo" 
                                     className="w-full h-full object-contain"
+                                    crossOrigin="anonymous"
                                     onError={(e) => { 
                                         e.target.onerror = null; 
-                                        e.target.src = "https://via.placeholder.com/150?text=DIAC"; 
+                                        e.target.src = "https://via.placeholder.com/150/FFFFFF/6366f1?text=DIAC"; 
                                     }}
                                 />
                             </div>
                             <h1 className="text-3xl font-black text-indigo-600 tracking-tight uppercase whimsical-font">DIAC STAFF HUB</h1>
-                            <p className="text-slate-500 text-[10px] mt-1 font-black tracking-[0.2em] uppercase">Durham Immersive Arts Camp</p>
+                            <p className="text-slate-500 text-[10px] mt-1 font-black tracking-[0.2em] uppercase">Durham Integrated Arts Camp</p>
                         </div>
 
                         <form onSubmit={handleLogin} className="space-y-4">
@@ -314,7 +323,7 @@
                         <div className="max-w-2xl mx-auto p-6 space-y-8 relative z-10">
                             <div className="flex flex-col items-center text-center">
                                 <div className="w-32 h-32 rounded-[32px] overflow-hidden shadow-xl border-4 border-white ring-8 ring-indigo-50 mb-4 bg-slate-50 flex items-center justify-center rotate-2">
-                                    {selectedStudent.photoUrl ? <img src={getDirectDriveUrl(selectedStudent.photoUrl)} className="w-full h-full object-cover" /> : <Icon name="user" size={48} className="text-slate-200" />}
+                                    {selectedStudent.photoUrl ? <img src={getDirectDriveUrl(selectedStudent.photoUrl)} className="w-full h-full object-cover" crossOrigin="anonymous" /> : <Icon name="user" size={48} className="text-slate-200" />}
                                 </div>
                                 <h2 className="text-3xl font-black text-slate-900 whimsical-font">{selectedStudent.displayName}</h2>
                                 <div className="flex gap-2 mt-3">
@@ -394,7 +403,7 @@
                                 <button key={s.uid} onClick={() => setSelectedStudent(s)} className="bg-white p-3 rounded-2xl border-2 border-slate-100 flex items-center justify-between w-full shadow-sm active:scale-95 transition-all text-left group hover:border-indigo-200">
                                     <div className="flex items-center gap-4">
                                         <div className="w-12 h-12 rounded-2xl bg-indigo-50 overflow-hidden border border-indigo-100 flex items-center justify-center group-hover:rotate-3 transition-transform">
-                                            {s.photoUrl ? <img src={getDirectDriveUrl(s.photoUrl)} className="w-full h-full object-cover" /> : <Icon name="user" className="text-indigo-200" size={20} />}
+                                            {s.photoUrl ? <img src={getDirectDriveUrl(s.photoUrl)} className="w-full h-full object-cover" crossOrigin="anonymous" /> : <Icon name="user" className="text-indigo-200" size={20} />}
                                         </div>
                                         <div className="font-bold text-slate-900 leading-tight group-hover:text-indigo-600">{s.displayName}</div>
                                     </div>
@@ -410,14 +419,15 @@
                 <div className="min-h-screen pb-24">
                     <header className="bg-indigo-600 text-white p-5 sticky top-0 z-50 flex justify-between items-center shadow-xl">
                         <div className="flex items-center gap-3">
-                            <div className="bg-white p-1 rounded-xl shadow-inner -rotate-3 overflow-hidden">
+                            <div className="bg-white p-1 rounded-xl shadow-inner -rotate-3 overflow-hidden logo-placeholder">
                                 <img 
                                     src={APP_LOGO_URL} 
                                     alt="Logo" 
                                     className="w-8 h-8 object-contain"
+                                    crossOrigin="anonymous"
                                     onError={(e) => { 
                                         e.target.onerror = null; 
-                                        e.target.src = "https://via.placeholder.com/150?text=DIAC"; 
+                                        e.target.src = "https://via.placeholder.com/150/FFFFFF/6366f1?text=DIAC"; 
                                     }}
                                 />
                             </div>
@@ -458,7 +468,7 @@
                                         <button key={s.uid} onClick={() => setSelectedStudent(s)} className="bg-white p-3 rounded-2xl border-2 border-slate-50 flex items-center justify-between w-full shadow-sm active:scale-95 transition-all text-left hover:border-indigo-100 group">
                                             <div className="flex items-center gap-4">
                                                 <div className="w-14 h-14 rounded-2xl bg-indigo-50 overflow-hidden border border-indigo-50 flex items-center justify-center group-hover:scale-105 transition-transform">
-                                                    {s.photoUrl ? <img src={getDirectDriveUrl(s.photoUrl)} className="w-full h-full object-cover" /> : <Icon name="user" className="text-indigo-200" size={24} />}
+                                                    {s.photoUrl ? <img src={getDirectDriveUrl(s.photoUrl)} className="w-full h-full object-cover" crossOrigin="anonymous" /> : <Icon name="user" className="text-indigo-200" size={24} />}
                                                 </div>
                                                 <div>
                                                     <div className="font-bold text-slate-900 leading-tight group-hover:text-indigo-600">{s.displayName}</div>
