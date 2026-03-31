@@ -4,6 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>DIAC Staff Hub</title>
+    
+    <!-- FAVICON & APP ICONS -->
+    <!-- Using the GitHub path for the uploaded logo -->
+    <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/diac-dev/diac-staff-hub/main/logo.png">
+    <link rel="apple-touch-icon" href="https://raw.githubusercontent.com/diac-dev/diac-staff-hub/main/logo.png">
+    
+    <!-- iOS Web App Meta -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="DIAC Hub">
+
     <script src="https://cdn.tailwindcss.com"></script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -15,7 +26,7 @@
         .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }
-        input { font-size: 16px !important; } /* Prevents iOS zoom on focus */
+        input { font-size: 16px !important; }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-900">
@@ -24,8 +35,9 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
-        // UPDATED SCRIPT URL
         const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxhItS7qPYq98U2AlS-abawps-boJ1LF7reEUutsfAgdprCN9wh3fibwk4UurNXZ7n4/exec";
+        // Update this constant to use your GitHub hosted image path
+        const APP_LOGO_URL = "https://raw.githubusercontent.com/diac-dev/diac-staff-hub/main/logo.png";
 
         const getDirectDriveUrl = (url) => {
             if (!url) return null;
@@ -50,13 +62,11 @@
         );
 
         function App() {
-            // Authentication State
             const [isAuthenticated, setIsAuthenticated] = useState(false);
             const [loginData, setLoginData] = useState({ user: '', pass: '' });
             const [loginError, setLoginError] = useState('');
             const [isLoggingIn, setIsLoggingIn] = useState(false);
 
-            // Data State
             const [activeTab, setActiveTab] = useState('students');
             const [searchQuery, setSearchQuery] = useState('');
             const [students, setStudents] = useState([]);
@@ -66,7 +76,6 @@
             const [selectedCabin, setSelectedCabin] = useState(null);
             const [refreshing, setRefreshing] = useState(false);
 
-            // 1. Check for persistent session
             useEffect(() => {
                 const savedUser = localStorage.getItem('diac_auth_user');
                 if (savedUser) {
@@ -176,17 +185,20 @@
                 );
             }, [processedStudents, searchQuery]);
 
-            // --- Views ---
-
             if (!isAuthenticated) return (
                 <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6">
                     <div className="w-full max-w-sm animate-fade-in">
                         <div className="text-center mb-8">
-                            <div className="w-20 h-20 bg-indigo-600 rounded-3xl flex items-center justify-center mx-auto mb-4 shadow-xl shadow-indigo-500/20">
-                                <Icon name="shield-check" size={40} className="text-white" />
+                            <div className="w-28 h-28 bg-white rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-indigo-500/20 overflow-hidden">
+                                <img 
+                                    src={APP_LOGO_URL} 
+                                    alt="DIAC Logo" 
+                                    className="w-24 h-24 object-contain"
+                                    onError={(e) => { e.target.src = 'https://raw.githubusercontent.com/diac-dev/diac-staff-hub/main/logo.png'; }}
+                                />
                             </div>
-                            <h1 className="text-2xl font-black text-white tracking-tight">DIAC STAFF HUB</h1>
-                            <p className="text-slate-400 text-sm mt-2 font-medium tracking-wide uppercase">Authorized Personnel Only</p>
+                            <h1 className="text-2xl font-black text-white tracking-tight uppercase">DIAC STAFF HUB</h1>
+                            <p className="text-slate-400 text-[10px] mt-2 font-black tracking-[0.2em] uppercase">Durham Integrated Arts Camp</p>
                         </div>
 
                         <form onSubmit={handleLogin} className="space-y-4">
@@ -323,9 +335,12 @@
             return (
                 <div className="min-h-screen bg-slate-50 pb-24">
                     <header className="bg-slate-900 text-white p-5 sticky top-0 z-50 flex justify-between items-center shadow-lg">
-                        <div>
-                            <h1 className="text-xl font-black italic tracking-tighter">DIAC HUB</h1>
-                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{refreshing ? 'Syncing...' : `${processedStudents.length} Students`}</p>
+                        <div className="flex items-center gap-3">
+                            <img src={APP_LOGO_URL} alt="Logo" className="w-8 h-8 rounded-lg bg-white p-0.5 object-contain" />
+                            <div>
+                                <h1 className="text-lg font-black italic tracking-tighter leading-none">DIAC HUB</h1>
+                                <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-1">{refreshing ? 'Syncing...' : `${processedStudents.length} Students`}</p>
+                            </div>
                         </div>
                         <div className="flex gap-2">
                             <button onClick={fetchData} className="p-2 bg-slate-800 rounded-xl active:scale-90 transition-all"><Icon name="refresh-cw" size={18} className={refreshing ? 'animate-spin' : ''}/></button>
