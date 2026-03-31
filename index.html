@@ -46,6 +46,13 @@
         input, select { font-size: 16px !important; }
         .art-card { border-radius: 24px 8px 24px 8px; }
         .logo-placeholder { background-color: #ffffff; display: flex; align-items: center; justify-content: center; }
+        
+        .loading-shimmer {
+            background: linear-gradient(90deg, #f0f0f0 25%, #f8f8f8 50%, #f0f0f0 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
+        }
+        @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
     </style>
 </head>
 <body class="text-slate-900">
@@ -57,7 +64,7 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
-        // UPDATED SCRIPT URL
+        // VERIFY THIS SCRIPT URL MATCHES YOUR LATEST DEPLOYMENT
         const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwQoftfxLs0EUVnKJ6i3zSuNGuY0vuyL2XzUFBXLSXMd2QmZSb13_xAc4GSg1MJlZOV/exec";
         const APP_LOGO_URL = "https://raw.githubusercontent.com/adamryan3976-glitch/DIAC26/main/diaclogo.png";
 
@@ -115,20 +122,30 @@
                 e.preventDefault();
                 setIsLoggingIn(true);
                 setLoginError('');
+                
                 try {
-                    const res = await fetch(`${SCRIPT_URL}?action=login&user=${encodeURIComponent(loginData.user)}&pass=${encodeURIComponent(loginData.pass)}`);
+                    // Force trim username in case of accidental spaces
+                    const user = loginData.user.trim();
+                    const pass = loginData.pass.trim();
+                    
+                    const res = await fetch(`${SCRIPT_URL}?action=login&user=${encodeURIComponent(user)}&pass=${encodeURIComponent(pass)}`);
+                    
+                    if (!res.ok) throw new Error('Server responded with an error.');
+                    
                     const result = await res.json();
+                    
                     if (result.success) {
-                        localStorage.setItem('diac_auth_user', loginData.user);
+                        localStorage.setItem('diac_auth_user', user);
                         localStorage.setItem('diac_auth_hoc', result.isHoc);
                         setIsAuthenticated(true);
                         setIsHoc(result.isHoc);
                         fetchData();
                     } else {
-                        setLoginError('Invalid username or password.');
+                        setLoginError(result.message || 'Invalid username or password.');
                     }
                 } catch (err) {
-                    setLoginError('Connection error.');
+                    console.error("Login attempt failed:", err);
+                    setLoginError('Connection error. Please ensure the Web App is deployed as "Anyone".');
                 } finally {
                     setIsLoggingIn(false);
                 }
@@ -156,7 +173,7 @@
                     setAttStudents(att);
                     setAbsences(abs);
                 } catch (err) {
-                    console.error(err);
+                    console.error("Data fetch failed:", err);
                 } finally {
                     setLoading(false);
                     setRefreshing(false);
@@ -174,7 +191,7 @@
                     await fetch(`${SCRIPT_URL}?action=markAbsent&studentName=${encodeURIComponent(student.name)}&session=${selectedSession}&activity=${encodeURIComponent(selectedClass)}&reportedBy=${encodeURIComponent(reporter)}&cabin=${encodeURIComponent(cabin)}`);
                     await fetchData();
                 } catch (e) {
-                    console.error(e);
+                    console.error("Mark absent failed:", e);
                 } finally {
                     setActionLoading(false);
                 }
@@ -186,7 +203,7 @@
                     await fetch(`${SCRIPT_URL}?action=clearAbsence&id=${id}`);
                     await fetchData();
                 } catch (e) {
-                    console.error(e);
+                    console.error("Clear absence failed:", e);
                 } finally {
                     setActionLoading(false);
                 }
@@ -232,25 +249,55 @@
             }, [selectedClass, selectedSession, attStudents]);
 
             if (!isAuthenticated) return (
-                <div className="min-h-screen flex items-center justify-center p-6 relative">
+                <div className="min-h-screen flex items-center justify-center p-6 relative bg-slate-50">
                     <div className="w-full max-w-sm animate-fade-in relative z-10">
                         <div className="text-center mb-8">
-                            <div className="w-32 h-32 bg-white rounded-[40px] flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-indigo-500/20 overflow-hidden logo-placeholder border-4 border-indigo-100 p-4">
+                            <div className="w-32 h-32 bg-white rounded-[40px] flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-indigo-500/10 overflow-hidden logo-placeholder border-4 border-white p-4">
                                 <img src={APP_LOGO_URL} alt="DIAC" className="w-full h-full object-contain" />
                             </div>
-                            <h1 className="text-3xl font-black text-indigo-600 whimsical-font uppercase">DIAC STAFF HUB</h1>
+                            <h1 className="text-3xl font-black text-indigo-600 whimsical-font uppercase tracking-tighter">DIAC STAFF HUB</h1>
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-2">Secure Access Required</p>
                         </div>
                         <form onSubmit={handleLogin} className="space-y-4">
-                            <div className="relative">
-                                <Icon name="user" size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                                <input type="text" placeholder="Username" required className="w-full bg-white border-2 border-slate-100 py-4 pl-12 pr-4 rounded-2xl outline-none focus:border-indigo-400" value={loginData.user} onChange={e => setLoginData({...loginData, user: e.target.value})} />
+                            <div className="space-y-1">
+                                <div className="relative">
+                                    <Icon name="user" size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                                    <input 
+                                        type="text" 
+                                        placeholder="Username" 
+                                        required 
+                                        className="w-full bg-white border-2 border-slate-100 py-4 pl-12 pr-4 rounded-2xl outline-none focus:border-indigo-400 transition-all shadow-sm" 
+                                        value={loginData.user} 
+                                        onChange={e => setLoginData({...loginData, user: e.target.value})} 
+                                    />
+                                </div>
                             </div>
-                            <div className="relative">
-                                <Icon name="lock" size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                                <input type="password" placeholder="Password" required className="w-full bg-white border-2 border-slate-100 py-4 pl-12 pr-4 rounded-2xl outline-none focus:border-indigo-400" value={loginData.pass} onChange={e => setLoginData({...loginData, pass: e.target.value})} />
+                            <div className="space-y-1">
+                                <div className="relative">
+                                    <Icon name="lock" size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                                    <input 
+                                        type="password" 
+                                        placeholder="Password" 
+                                        required 
+                                        className="w-full bg-white border-2 border-slate-100 py-4 pl-12 pr-4 rounded-2xl outline-none focus:border-indigo-400 transition-all shadow-sm" 
+                                        value={loginData.pass} 
+                                        onChange={e => setLoginData({...loginData, pass: e.target.value})} 
+                                    />
+                                </div>
                             </div>
-                            {loginError && <div className="text-rose-500 text-xs font-bold text-center">{loginError}</div>}
-                            <button type="submit" disabled={isLoggingIn} className="w-full bg-indigo-600 text-white font-black py-4 rounded-2xl shadow-lg uppercase">
+                            
+                            {loginError && (
+                                <div className="bg-rose-50 border border-rose-100 text-rose-600 p-4 rounded-2xl text-xs font-bold text-center animate-fade-in flex items-center justify-center gap-2">
+                                    <Icon name="alert-circle" size={14} />
+                                    {loginError}
+                                </div>
+                            )}
+
+                            <button 
+                                type="submit" 
+                                disabled={isLoggingIn} 
+                                className="w-full bg-indigo-600 text-white font-black py-4 rounded-2xl shadow-lg shadow-indigo-200 active:scale-95 transition-all uppercase disabled:opacity-50 disabled:active:scale-100"
+                            >
                                 {isLoggingIn ? 'Verifying...' : 'Enter Hub'}
                             </button>
                         </form>
@@ -261,7 +308,7 @@
             if (loading) return (
                 <div className="min-h-screen bg-white flex flex-col items-center justify-center text-slate-900">
                     <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-                    <p className="whimsical-font text-lg text-indigo-600">Mixing Colors...</p>
+                    <p className="whimsical-font text-lg text-indigo-600">Syncing with Studio...</p>
                 </div>
             );
 
@@ -281,7 +328,7 @@
             if (selectedStudent) return (
                 <div className="min-h-screen bg-white pb-20 animate-fade-in relative">
                     <header className="bg-indigo-600 text-white p-5 sticky top-0 z-50 flex items-center gap-4">
-                        <button onClick={() => setSelectedStudent(null)} className="p-2 -ml-2"><Icon name="chevron-left" /></button>
+                        <button onClick={() => setSelectedStudent(null)} className="p-2 -ml-2 active:scale-90 transition-all"><Icon name="chevron-left" /></button>
                         <h1 className="text-lg font-bold truncate whimsical-font">{selectedStudent.displayName}</h1>
                     </header>
                     <div className="max-w-2xl mx-auto p-6 space-y-6">
@@ -336,15 +383,15 @@
                             <h1 className="text-xl font-black whimsical-font tracking-tighter">DIAC HUB</h1>
                         </div>
                         <div className="flex gap-2">
-                            <button onClick={fetchData} className="p-2 bg-indigo-500 rounded-xl active:scale-90"><Icon name="refresh-cw" size={18} className={refreshing ? 'animate-spin' : ''}/></button>
-                            <button onClick={handleLogout} className="p-2 bg-indigo-500 rounded-xl active:scale-90"><Icon name="log-out" size={18}/></button>
+                            <button onClick={fetchData} className="p-2 bg-indigo-500 rounded-xl active:scale-90 transition-all"><Icon name="refresh-cw" size={18} className={refreshing ? 'animate-spin' : ''}/></button>
+                            <button onClick={handleLogout} className="p-2 bg-indigo-500 rounded-xl active:scale-90 transition-all"><Icon name="log-out" size={18}/></button>
                         </div>
                     </header>
 
                     <main className="max-w-2xl mx-auto p-4 space-y-4">
-                        <nav className="flex gap-1 p-1 bg-white rounded-2xl border border-slate-100 overflow-x-auto">
+                        <nav className="flex gap-1 p-1 bg-white rounded-2xl border border-slate-100 overflow-x-auto no-scrollbar">
                             {['students', 'cabins', 'schedule', 'attendance', isHoc && 'hoc'].filter(Boolean).map(tab => (
-                                <button key={tab} onClick={() => setActiveTab(tab)} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whimsical-font text-sm flex-shrink-0 ${activeTab === tab ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}>
+                                <button key={tab} onClick={() => setActiveTab(tab)} className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whimsical-font text-sm flex-shrink-0 ${activeTab === tab ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400'}`}>
                                     {tab}
                                 </button>
                             ))}
@@ -354,18 +401,18 @@
                             <>
                                 <div className="relative">
                                     <Icon name="search" size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                                    <input type="text" placeholder="Find an artist..." className="w-full bg-white border-2 border-slate-50 py-4 pl-12 pr-4 rounded-3xl shadow-sm outline-none" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+                                    <input type="text" placeholder="Find an artist..." className="w-full bg-white border-2 border-slate-50 py-4 pl-12 pr-4 rounded-3xl shadow-sm outline-none focus:border-indigo-200 transition-all" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
                                 </div>
                                 <div className="grid gap-2">
                                     {filteredStudents.map(s => (
-                                        <button key={s.uid} onClick={() => setSelectedStudent(s)} className="bg-white p-3 rounded-2xl border-2 border-slate-50 flex items-center justify-between w-full shadow-sm text-left">
+                                        <button key={s.uid} onClick={() => setSelectedStudent(s)} className="bg-white p-3 rounded-2xl border-2 border-slate-50 flex items-center justify-between w-full shadow-sm text-left active:scale-[0.98] transition-all">
                                             <div className="flex items-center gap-4">
-                                                <div className="w-14 h-14 rounded-2xl bg-indigo-50 overflow-hidden flex items-center justify-center">
+                                                <div className="w-14 h-14 rounded-2xl bg-indigo-50 overflow-hidden flex items-center justify-center border border-slate-100">
                                                     {s.photoUrl ? <img src={getDirectDriveUrl(s.photoUrl)} className="w-full h-full object-cover" /> : <Icon name="user" className="text-indigo-200" size={24} />}
                                                 </div>
                                                 <div>
                                                     <div className="font-bold text-slate-900 leading-tight">{s.displayName}</div>
-                                                    <div className="text-[10px] text-slate-400 font-bold uppercase mt-0.5">Cabin {s.cabin} • {s.school || 'DDSB'}</div>
+                                                    <div className="text-[10px] text-slate-400 font-bold uppercase mt-0.5 tracking-wide">Cabin {s.cabin} • {s.school || 'DDSB'}</div>
                                                 </div>
                                             </div>
                                             <Icon name="chevron-right" size={18} className="text-slate-300 mr-2" />
@@ -378,12 +425,12 @@
                         {activeTab === 'cabins' && (
                             <div className="grid gap-4">
                                 {cabins.map(cabin => (
-                                    <button key={cabin.name} onClick={() => setSelectedCabin(cabin)} className="bg-white p-5 rounded-[32px] border-2 border-slate-50 shadow-sm flex items-center justify-between w-full text-left art-card">
+                                    <button key={cabin.name} onClick={() => setSelectedCabin(cabin)} className="bg-white p-5 rounded-[32px] border-2 border-slate-50 shadow-sm flex items-center justify-between w-full text-left art-card active:scale-[0.98] transition-all">
                                         <div className="flex items-center gap-5">
-                                            <div className="w-14 h-14 bg-amber-50 text-amber-600 rounded-[20px] flex items-center justify-center font-black whimsical-font text-lg">{cabin.name.charAt(0)}</div>
+                                            <div className="w-14 h-14 bg-amber-50 text-amber-600 rounded-[20px] flex items-center justify-center font-black whimsical-font text-lg border border-amber-100">{cabin.name.charAt(0)}</div>
                                             <div>
                                                 <h3 className="font-bold text-slate-900 text-lg whimsical-font tracking-wide">Cabin {cabin.name}</h3>
-                                                <p className="text-[10px] font-bold text-slate-400 uppercase">{cabin.count} Artists</p>
+                                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{cabin.count} Artists</p>
                                             </div>
                                         </div>
                                         <Icon name="chevron-right" className="text-slate-300" />
@@ -395,7 +442,7 @@
                         {activeTab === 'schedule' && (
                             <div className="bg-white rounded-[32px] border-2 border-slate-50 shadow-sm overflow-hidden art-card">
                                 {schedule.map((item, i) => (
-                                    <div key={i} className="p-5 flex gap-5 border-b border-slate-50 last:border-0">
+                                    <div key={i} className="p-5 flex gap-5 border-b border-slate-50 last:border-0 hover:bg-slate-50 transition-colors">
                                         <div className="text-indigo-600 font-black text-sm uppercase whimsical-font min-w-[70px]">{item.time}</div>
                                         <div>
                                             <div className="font-bold text-slate-900 text-base leading-tight">{item.event}</div>
@@ -437,9 +484,9 @@
                                                         <div className="text-[10px] text-slate-400 font-bold uppercase">{s[selectedSession + 'V'] || 'Venue TBA'}</div>
                                                     </div>
                                                     {isMarked ? (
-                                                        <span className="text-[10px] font-black bg-rose-100 text-rose-600 px-3 py-2 rounded-full uppercase">Reported Absent</span>
+                                                        <span className="text-[10px] font-black bg-rose-100 text-rose-600 px-3 py-2 rounded-full uppercase animate-pulse">Reported Absent</span>
                                                     ) : (
-                                                        <button disabled={actionLoading} onClick={() => markAbsent(s)} className="text-[10px] font-black bg-indigo-50 text-indigo-600 px-4 py-2 rounded-full uppercase active:scale-95">Mark Absent</button>
+                                                        <button disabled={actionLoading} onClick={() => markAbsent(s)} className="text-[10px] font-black bg-indigo-50 text-indigo-600 px-4 py-2 rounded-full uppercase active:scale-95 transition-all">Mark Absent</button>
                                                     )}
                                                 </div>
                                             );
@@ -465,16 +512,16 @@
                                                     <p className="text-[10px] font-black text-rose-500 uppercase tracking-widest">Cabin {abs.cabin} • {abs.session}</p>
                                                     <p className="text-[11px] font-bold text-slate-400 mt-1">{abs.activity}</p>
                                                 </div>
-                                                <button disabled={actionLoading} onClick={() => clearAbsence(abs.id)} className="bg-emerald-50 text-emerald-600 p-2 rounded-xl active:scale-95"><Icon name="check-circle" size={20} /></button>
+                                                <button disabled={actionLoading} onClick={() => clearAbsence(abs.id)} className="bg-emerald-50 text-emerald-600 p-2 rounded-xl active:scale-95 transition-all"><Icon name="check-circle" size={20} /></button>
                                             </div>
                                             <div className="flex justify-between items-center pt-3 border-t border-slate-50">
-                                                <span className="text-[9px] font-black text-slate-300 uppercase">By {abs.reporter}</span>
-                                                <span className="text-[9px] font-black text-slate-300 uppercase">{new Date(abs.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                                <span className="text-[9px] font-black text-slate-300 uppercase tracking-wider">By {abs.reporter}</span>
+                                                <span className="text-[9px] font-black text-slate-300 uppercase tracking-wider">{new Date(abs.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                                             </div>
                                         </div>
                                     )) : (
                                         <div className="p-16 text-center">
-                                            <div className="w-16 h-16 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mx-auto mb-4"><Icon name="check" size={32} /></div>
+                                            <div className="w-16 h-16 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mx-auto mb-4 border border-emerald-100 shadow-inner"><Icon name="check" size={32} /></div>
                                             <p className="text-slate-400 font-bold uppercase tracking-widest whimsical-font">All Artists Safe</p>
                                         </div>
                                     )}
@@ -483,7 +530,7 @@
                         )}
                     </main>
                    
-                    <footer className="fixed bottom-0 left-0 w-full p-4 pointer-events-none flex justify-center z-40">
+                    <footer className="fixed bottom-0 left-0 w-full p-4 pointer-events-none flex justify-center z-40 pb-8">
                         <div className="px-6 py-2 bg-indigo-600/10 backdrop-blur-md rounded-full border border-indigo-600/10 text-[9px] font-black uppercase text-indigo-600 tracking-[0.3em] whimsical-font">DIAC 2026</div>
                     </footer>
                 </div>
