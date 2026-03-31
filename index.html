@@ -5,521 +5,398 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>DIAC Staff Hub</title>
     
-    <!-- FAVICON & APP ICONS - UPDATED TO CORRECT REPO -->
     <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/adamryan3976-glitch/DIAC26/main/diaclogo.png">
     <link rel="apple-touch-icon" href="https://raw.githubusercontent.com/adamryan3976-glitch/DIAC26/main/diaclogo.png">
     
-    <!-- iOS Web App Meta -->
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="DIAC Hub">
 
     <script src="https://cdn.tailwindcss.com"></script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://unpkg.com/@lucide/lab"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
+
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Gaegu:wght@400;700&display=swap');
-        
-        body { 
-            font-family: 'Inter', sans-serif; 
-            -webkit-tap-highlight-color: transparent;
-            background-color: #f8fafc;
-            overflow-x: hidden;
-        }
-
+        body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; background-color: #f8fafc; overflow-x: hidden; }
         .whimsical-font { font-family: 'Gaegu', cursive; }
-
-        /* Paint Splotches */
-        .paint-splotch {
-            position: fixed;
-            z-index: -1;
-            filter: blur(40px);
-            opacity: 0.15;
-            pointer-events: none;
-        }
-
-        .splotch-1 { top: -5%; left: -5%; width: 300px; height: 300px; background: #6366f1; border-radius: 45% 55% 70% 30% / 30% 40% 60% 70%; }
-        .splotch-2 { bottom: 10%; right: -10%; width: 250px; height: 250px; background: #f43f5e; border-radius: 70% 30% 30% 70% / 60% 40% 60% 40%; }
-        .splotch-3 { top: 40%; left: 10%; width: 150px; height: 150px; background: #fbbf24; border-radius: 50%; opacity: 0.1; }
-
         .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
-        
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }
+        .absent-glow { box-shadow: 0 0 15px rgba(244, 63, 94, 0.2); }
         
-        input { font-size: 16px !important; }
-
-        .art-card {
-            border-radius: 24px 8px 24px 8px;
-        }
-
-        .logo-placeholder {
-            background-color: #ffffff;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
 <body class="text-slate-900">
-    <div class="paint-splotch splotch-1"></div>
-    <div class="paint-splotch splotch-2"></div>
-    <div class="paint-splotch splotch-3"></div>
-
     <div id="root"></div>
 
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
-        const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxhItS7qPYq98U2AlS-abawps-boJ1LF7reEUutsfAgdprCN9wh3fibwk4UurNXZ7n4/exec";
-        
-        // CORRECTED URL based on your GitHub location
+        // Configuration
+        const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx-q8hOcQwJs8NpqJ7aFcW-sX47DUYY6IM8qsE8wlm3uq7NUGXYtg0GGjx_W09rdpur/exec";
         const APP_LOGO_URL = "https://raw.githubusercontent.com/adamryan3976-glitch/DIAC26/main/diaclogo.png";
-
-        const getDirectDriveUrl = (url) => {
-            if (!url) return null;
-            const stringUrl = String(url);
-            if (stringUrl.includes('drive.google.com')) {
-                let fileId = '';
-                if (stringUrl.includes('id=')) {
-                    fileId = stringUrl.split('id=')[1].split('&')[0];
-                } else if (stringUrl.includes('/file/d/')) {
-                    fileId = stringUrl.split('/file/d/')[1].split('/')[0];
-                }
-                if (fileId) return `https://lh3.googleusercontent.com/d/${fileId}=s400`;
-            }
-            return stringUrl;
-        };
-
-        const formatCleanDate = (dateStr) => dateStr ? String(dateStr).split(/[T ]/)[0] : "";
-        const formatGrade = (gradeStr) => gradeStr ? String(gradeStr).trim() : "";
 
         const Icon = ({ name, size = 24, className = "" }) => (
             <i data-lucide={name} style={{ width: size, height: size }} className={className}></i>
         );
 
         function App() {
-            const [isAuthenticated, setIsAuthenticated] = useState(false);
-            const [loginData, setLoginData] = useState({ user: '', pass: '' });
-            const [loginError, setLoginError] = useState('');
-            const [isLoggingIn, setIsLoggingIn] = useState(false);
-
-            const [activeTab, setActiveTab] = useState('students');
-            const [searchQuery, setSearchQuery] = useState('');
+            const [isAuth, setIsAuth] = useState(false);
+            const [isHoc, setIsHoc] = useState(false);
+            const [activeTab, setActiveTab] = useState('attendance');
             const [students, setStudents] = useState([]);
+            const [absences, setAbsences] = useState([]);
             const [schedule, setSchedule] = useState([]);
             const [loading, setLoading] = useState(true);
-            const [selectedStudent, setSelectedStudent] = useState(null);
-            const [selectedCabin, setSelectedCabin] = useState(null);
-            const [refreshing, setRefreshing] = useState(false);
+            const [syncing, setSyncing] = useState(false);
+            const [selectedSession, setSelectedSession] = useState('S1');
+            const [selectedActivity, setSelectedActivity] = useState('');
 
+            // Initialization
             useEffect(() => {
                 const savedUser = localStorage.getItem('diac_auth_user');
+                const savedHoc = localStorage.getItem('diac_auth_hoc') === 'true';
                 if (savedUser) {
-                    setIsAuthenticated(true);
-                    fetchData();
-                } else {
-                    setLoading(false);
+                    setIsAuth(true);
+                    setIsHoc(savedHoc);
                 }
+                
+                fetchAllData();
+
+                // Periodic sync for absences (HOC Dashboard)
+                const interval = setInterval(fetchAbsences, 15000);
+                return () => clearInterval(interval);
             }, []);
 
-            const handleLogin = async (e) => {
-                e.preventDefault();
-                setIsLoggingIn(true);
-                setLoginError('');
+            const fetchAllData = async () => {
+                setLoading(true);
                 try {
-                    const res = await fetch(`${SCRIPT_URL}?action=login&user=${encodeURIComponent(loginData.user)}&pass=${encodeURIComponent(loginData.pass)}`);
-                    const result = await res.json();
-                    
-                    if (result.success) {
-                        localStorage.setItem('diac_auth_user', loginData.user);
-                        setIsAuthenticated(true);
-                        fetchData();
-                    } else {
-                        setLoginError('Invalid username or password.');
-                    }
-                } catch (err) {
-                    setLoginError('Connection error. Please check your internet.');
-                } finally {
-                    setIsLoggingIn(false);
-                }
-            };
-
-            const handleLogout = () => {
-                localStorage.removeItem('diac_auth_user');
-                setIsAuthenticated(false);
-                setStudents([]);
-            };
-
-            const fetchData = async () => {
-                setRefreshing(true);
-                try {
-                    const [stuRes, schRes] = await Promise.all([
+                    const [stuRes, absRes, schRes] = await Promise.all([
                         fetch(`${SCRIPT_URL}?action=students`),
+                        fetch(`${SCRIPT_URL}?action=getAbsences`),
                         fetch(`${SCRIPT_URL}?action=schedule`)
                     ]);
                     const stuData = await stuRes.json();
+                    const absData = await absRes.json();
                     const schData = await schRes.json();
+                    
                     setStudents(Array.isArray(stuData) ? stuData : []);
+                    setAbsences(Array.isArray(absData) ? absData : []);
                     setSchedule(Array.isArray(schData) ? schData : []);
                 } catch (err) {
-                    console.error("Sync error:", err);
+                    console.error("Fetch Error:", err);
                 } finally {
                     setLoading(false);
-                    setRefreshing(false);
                     setTimeout(() => lucide.createIcons(), 100);
                 }
             };
 
-            useEffect(() => {
-                lucide.createIcons();
-            }, [selectedStudent, selectedCabin, activeTab, students, isAuthenticated]);
+            const fetchAbsences = async () => {
+                try {
+                    const res = await fetch(`${SCRIPT_URL}?action=getAbsences`);
+                    const data = await res.json();
+                    setAbsences(Array.isArray(data) ? data : []);
+                } catch (err) {
+                    console.error("Sync Error:", err);
+                }
+            };
 
-            const processedStudents = useMemo(() => {
-                if (!Array.isArray(students)) return [];
-                return students.map((s, index) => {
-                    const fullName = s.ab || "Unknown Student";
-                    const names = fullName.trim().split(' ');
-                    const lastName = names.length > 1 ? names[names.length - 1] : fullName;
+            const toggleAttendance = async (student) => {
+                if (!selectedActivity) return;
+                
+                const isCurrentlyAbsent = absences.some(a => a.studentId === student.c && a.session === selectedSession);
+                setSyncing(true);
 
-                    return {
-                        uid: index, 
-                        displayName: fullName,
-                        lastName: lastName,
-                        id: s.c || "N/A",
-                        dob: formatCleanDate(s.d),
-                        pronouns: s.f || "",
-                        cabin: s.g || "Unassigned",
-                        grade: formatGrade(s.m),
-                        school: s.n || "",
-                        photoUrl: s.o || "",
-                        dietary: s.p || "",
-                        allergies: s.q || "",
-                        sessions: [
-                            { id: 1, activity: s.r, venue: s.s },
-                            { id: 2, activity: s.t, venue: s.u },
-                            { id: 3, activity: s.v, venue: s.w },
-                            { id: 4, activity: s.x, venue: s.y }
-                        ],
-                        emergency: {
-                            name: `${s.h || ''} ${s.i || ''}`.trim() || "Not Provided",
-                            phone: s.j || s.k || "", 
-                            email: s.l || ""
-                        }
-                    };
-                }).sort((a, b) => a.lastName.localeCompare(b.lastName));
-            }, [students]);
+                const payload = {
+                    action: isCurrentlyAbsent ? 'markPresent' : 'markAbsent',
+                    studentId: student.c,
+                    studentName: student.ab,
+                    cabin: student.g,
+                    session: selectedSession,
+                    activity: selectedActivity,
+                    reportedBy: localStorage.getItem('diac_auth_user'),
+                    timestamp: new Date().toISOString()
+                };
 
-            const cabins = useMemo(() => {
-                const groups = {};
-                processedStudents.forEach(s => {
-                    const c = s.cabin || "Unassigned";
-                    if (!groups[c]) groups[c] = [];
-                    groups[c].push(s);
-                });
-                return Object.keys(groups).sort().map(name => ({ name, count: groups[name].length, students: groups[name] }));
-            }, [processedStudents]);
+                try {
+                    // Optimistic update
+                    if (isCurrentlyAbsent) {
+                        setAbsences(prev => prev.filter(a => !(a.studentId === student.c && a.session === selectedSession)));
+                    } else {
+                        setAbsences(prev => [...prev, payload]);
+                    }
 
-            const filteredStudents = useMemo(() => {
-                const q = searchQuery.toLowerCase();
-                return processedStudents.filter(s => 
-                    s.displayName.toLowerCase().includes(q) || 
-                    s.cabin.toString().toLowerCase().includes(q) ||
-                    s.school.toLowerCase().includes(q)
-                );
-            }, [processedStudents, searchQuery]);
+                    await fetch(SCRIPT_URL, {
+                        method: 'POST',
+                        mode: 'no-cors',
+                        body: JSON.stringify(payload)
+                    });
+                    
+                    setTimeout(fetchAbsences, 2000);
+                } finally {
+                    setSyncing(false);
+                }
+            };
 
-            if (!isAuthenticated) return (
-                <div className="min-h-screen flex items-center justify-center p-6 relative">
-                    <div className="w-full max-w-sm animate-fade-in relative z-10">
-                        <div className="text-center mb-8">
-                            <div className="w-32 h-32 bg-white rounded-[40px] flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-indigo-500/20 overflow-hidden rotate-3 hover:rotate-0 transition-transform duration-500 border-4 border-indigo-100 p-4 logo-placeholder">
-                                <img 
-                                    src={APP_LOGO_URL} 
-                                    alt="DIAC Logo" 
-                                    className="w-full h-full object-contain"
-                                    crossOrigin="anonymous"
-                                    onError={(e) => { 
-                                        e.target.onerror = null; 
-                                        e.target.src = "https://via.placeholder.com/150/FFFFFF/6366f1?text=DIAC"; 
-                                    }}
-                                />
-                            </div>
-                            <h1 className="text-3xl font-black text-indigo-600 tracking-tight uppercase whimsical-font">DIAC STAFF HUB</h1>
-                            <p className="text-slate-500 text-[10px] mt-1 font-black tracking-[0.2em] uppercase">Durham Immersive Arts Camp</p>
+            const clearAbsence = async (studentId, session) => {
+                setSyncing(true);
+                try {
+                    setAbsences(prev => prev.filter(a => a.studentId !== studentId || a.session !== session));
+                    await fetch(SCRIPT_URL, {
+                        method: 'POST',
+                        mode: 'no-cors',
+                        body: JSON.stringify({ 
+                            action: 'markPresent', 
+                            studentId, 
+                            session,
+                            clearedBy: localStorage.getItem('diac_auth_user') 
+                        })
+                    });
+                    setTimeout(fetchAbsences, 1000);
+                } finally {
+                    setSyncing(false);
+                }
+            };
+
+            // Computed Lists
+            const activities = useMemo(() => {
+                const key = selectedSession.toLowerCase() === 's1' ? 'r' : selectedSession.toLowerCase() === 's2' ? 't' : selectedSession.toLowerCase() === 's3' ? 'v' : 'x';
+                return Array.from(new Set(students.map(s => s[key]).filter(Boolean))).sort();
+            }, [students, selectedSession]);
+
+            const currentRoster = useMemo(() => {
+                const key = selectedSession.toLowerCase() === 's1' ? 'r' : selectedSession.toLowerCase() === 's2' ? 't' : selectedSession.toLowerCase() === 's3' ? 'v' : 'x';
+                return students.filter(s => s[key] === selectedActivity).sort((a, b) => (a.ab || "").localeCompare(b.ab || ""));
+            }, [students, selectedSession, selectedActivity]);
+
+            useEffect(() => { lucide.createIcons(); }, [activeTab, absences, students, selectedActivity, loading]);
+
+            if (!isAuth) return <Login onLogin={(hocStatus) => { setIsAuth(true); setIsHoc(hocStatus); }} />;
+            if (loading) return <LoadingScreen />;
+
+            return (
+                <div className="min-h-screen pb-32 bg-slate-50">
+                    <header className="bg-indigo-600 text-white p-5 sticky top-0 z-50 flex justify-between items-center shadow-xl">
+                        <div className="flex items-center gap-3">
+                            <img src={APP_LOGO_URL} className="w-8 h-8 object-contain bg-white rounded-lg p-1 shadow-inner" />
+                            <h1 className="text-xl font-black whimsical-font tracking-tight">DIAC STAFF</h1>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            {syncing && <div className="w-2 h-2 bg-amber-400 rounded-full animate-ping mr-2"></div>}
+                            <button onClick={fetchAllData} className="p-2 bg-indigo-500 rounded-xl hover:bg-indigo-400 transition-colors">
+                                <Icon name="refresh-cw" size={18} />
+                            </button>
+                        </div>
+                    </header>
+
+                    <main className="max-w-2xl mx-auto p-4 space-y-5">
+                        <div className="bg-white p-1.5 rounded-[32px] shadow-sm border border-slate-100 flex gap-1 sticky top-[80px] z-40">
+                            <TabBtn id="attendance" icon="clipboard-check" label="Check" active={activeTab} onClick={setActiveTab} />
+                            {isHoc && <TabBtn id="dashboard" icon="shield-alert" label="Missing" active={activeTab} onClick={setActiveTab} />}
+                            <TabBtn id="roster" icon="users" label="Roster" active={activeTab} onClick={setActiveTab} />
+                            <TabBtn id="schedule" icon="calendar" label="Times" active={activeTab} onClick={setActiveTab} />
                         </div>
 
-                        <form onSubmit={handleLogin} className="space-y-4">
-                            <div className="relative">
-                                <Icon name="user" size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                                <input 
-                                    type="text" 
-                                    placeholder="Username"
-                                    required
-                                    className="w-full bg-white border-2 border-slate-100 text-slate-900 py-4 pl-12 pr-4 rounded-2xl outline-none focus:border-indigo-400 transition-all shadow-sm"
-                                    value={loginData.user}
-                                    onChange={e => setLoginData({...loginData, user: e.target.value})}
-                                />
-                            </div>
-                            <div className="relative">
-                                <Icon name="lock" size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                                <input 
-                                    type="password" 
-                                    placeholder="Password"
-                                    required
-                                    className="w-full bg-white border-2 border-slate-100 text-slate-900 py-4 pl-12 pr-4 rounded-2xl outline-none focus:border-indigo-400 transition-all shadow-sm"
-                                    value={loginData.pass}
-                                    onChange={e => setLoginData({...loginData, pass: e.target.value})}
-                                />
-                            </div>
-                            {loginError && (
-                                <div className="bg-rose-500/10 border border-rose-500/20 text-rose-500 text-xs font-bold py-3 px-4 rounded-xl text-center">
-                                    {loginError}
+                        {activeTab === 'attendance' && (
+                            <div className="space-y-4 animate-fade-in">
+                                <div className="grid grid-cols-4 gap-2 bg-white p-2 rounded-[28px] border border-slate-100 shadow-sm">
+                                    {['S1', 'S2', 'S3', 'S4'].map(s => (
+                                        <button key={s} onClick={() => { setSelectedSession(s); setSelectedActivity(''); }} className={`py-4 rounded-2xl font-black whimsical-font transition-all text-lg ${selectedSession === s ? 'bg-amber-400 text-amber-900 shadow-inner' : 'text-slate-400 hover:bg-slate-50'}`}>
+                                            {s}
+                                        </button>
+                                    ))}
                                 </div>
-                            )}
-                            <button 
-                                type="submit" 
-                                disabled={isLoggingIn}
-                                className="w-full bg-indigo-600 hover:bg-indigo-50 text-white font-black py-4 rounded-2xl shadow-lg shadow-indigo-600/30 active:scale-[0.98] transition-all flex items-center justify-center gap-3 uppercase tracking-wider"
-                            >
-                                {isLoggingIn ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> : 'ENTER THE HUB'}
+
+                                <div className="relative">
+                                    <select 
+                                        className="w-full p-5 rounded-[24px] bg-white border-2 border-indigo-50 shadow-sm appearance-none outline-none font-bold text-slate-700 text-lg pr-12 focus:border-indigo-200"
+                                        value={selectedActivity}
+                                        onChange={(e) => setSelectedActivity(e.target.value)}
+                                    >
+                                        <option value="">Select Workshop...</option>
+                                        {activities.map(a => <option key={a} value={a}>{a}</option>)}
+                                    </select>
+                                    <div className="absolute right-5 top-1/2 -translate-y-1/2 pointer-events-none text-indigo-300">
+                                        <Icon name="chevron-down" />
+                                    </div>
+                                </div>
+
+                                {selectedActivity ? (
+                                    <div className="space-y-2">
+                                        {currentRoster.map(student => {
+                                            const isAbsent = absences.some(a => a.studentId === student.c && a.session === selectedSession);
+                                            return (
+                                                <button 
+                                                    key={student.c} 
+                                                    onClick={() => toggleAttendance(student)}
+                                                    className={`p-4 rounded-[28px] border-2 transition-all flex items-center justify-between text-left active:scale-[0.98] w-full ${isAbsent ? 'bg-rose-50 border-rose-200 absent-glow' : 'bg-white border-white shadow-sm'}`}
+                                                >
+                                                    <div className="flex items-center gap-4">
+                                                        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-bold text-white ${isAbsent ? 'bg-rose-500' : 'bg-indigo-100 text-indigo-500'}`}>
+                                                            {isAbsent ? <Icon name="user-x" size={20} /> : student.ab?.charAt(0)}
+                                                        </div>
+                                                        <div>
+                                                            <p className={`font-bold text-lg leading-tight ${isAbsent ? 'text-rose-900' : 'text-slate-900'}`}>{student.ab}</p>
+                                                            <p className={`text-[10px] font-black uppercase tracking-wider ${isAbsent ? 'text-rose-400' : 'text-slate-400'}`}>Cabin {student.g}</p>
+                                                        </div>
+                                                    </div>
+                                                    <div className={`w-7 h-7 rounded-full border-2 flex items-center justify-center transition-all ${isAbsent ? 'bg-rose-600 border-rose-600 text-white' : 'border-slate-200 text-transparent'}`}>
+                                                        <Icon name="check" size={16} />
+                                                    </div>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                ) : (
+                                    <div className="py-20 text-center bg-indigo-50/40 rounded-[40px] border-2 border-dashed border-indigo-100">
+                                        <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center mx-auto mb-6 text-indigo-200 shadow-sm">
+                                            <Icon name="search" size={32} />
+                                        </div>
+                                        <p className="whimsical-font text-slate-500 text-xl font-bold">Pick a session & activity</p>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {activeTab === 'dashboard' && isHoc && (
+                            <div className="space-y-5 animate-fade-in">
+                                <h2 className="whimsical-font text-3xl font-black text-rose-600 italic px-2">Missing Dashboard</h2>
+                                {absences.length === 0 ? (
+                                    <div className="text-center py-20 bg-white rounded-[40px] border">
+                                        <Icon name="sparkles" size={48} className="mx-auto text-emerald-500 mb-4" />
+                                        <h3 className="whimsical-font text-2xl font-bold">All Artists Found</h3>
+                                    </div>
+                                ) : (
+                                    <div className="grid gap-4">
+                                        {absences.map((abs, idx) => (
+                                            <div key={idx} className="bg-white p-5 rounded-[32px] border-2 border-rose-100 shadow-lg relative overflow-hidden">
+                                                <div className="absolute top-0 right-0 p-3 bg-rose-600 text-white text-[10px] font-black rounded-bl-2xl uppercase">{abs.session}</div>
+                                                <div className="flex items-start gap-4">
+                                                    <div className="w-16 h-16 bg-rose-50 text-rose-500 rounded-3xl flex items-center justify-center font-black whimsical-font text-3xl">{abs.studentName?.charAt(0)}</div>
+                                                    <div className="flex-1 min-w-0">
+                                                        <h3 className="font-bold text-slate-900 whimsical-font text-2xl leading-none">{abs.studentName}</h3>
+                                                        <p className="text-rose-600 font-black text-[11px] uppercase mt-2">{abs.activity}</p>
+                                                    </div>
+                                                </div>
+                                                <button 
+                                                    onClick={() => clearAbsence(abs.studentId, abs.session)} 
+                                                    className="w-full mt-6 bg-emerald-500 text-white py-5 rounded-[22px] font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3"
+                                                >
+                                                    <Icon name="check" size={18} /> Mark Found
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {activeTab === 'roster' && (
+                            <div className="animate-fade-in space-y-4">
+                                <h2 className="whimsical-font text-3xl font-black text-slate-800 px-2">Master Roster</h2>
+                                <div className="grid gap-2">
+                                    {students.map((s, idx) => (
+                                        <div key={idx} className="bg-white p-4 rounded-[22px] border border-slate-100 flex items-center justify-between shadow-sm">
+                                            <div className="flex items-center gap-4">
+                                                <div className="w-10 h-10 bg-indigo-50 text-indigo-400 rounded-xl flex items-center justify-center font-bold">{s.ab?.charAt(0)}</div>
+                                                <div>
+                                                    <div className="font-bold text-slate-800 whimsical-font text-lg">{s.ab}</div>
+                                                    <div className="text-[10px] font-black text-slate-400 uppercase">Cabin {s.g} • Grade {s.m}</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'schedule' && (
+                            <div className="animate-fade-in space-y-4">
+                                <h2 className="whimsical-font text-3xl font-black text-slate-800 px-2">Creative Schedule</h2>
+                                <div className="bg-white rounded-[32px] border border-slate-100 shadow-sm overflow-hidden">
+                                    {schedule.map((item, idx) => (
+                                        <div key={idx} className="p-6 flex gap-6 border-b last:border-0">
+                                            <div className="min-w-[80px] text-indigo-600 font-black text-[11px] uppercase">{item.time}</div>
+                                            <div>
+                                                <h4 className="font-bold text-slate-900 text-lg">{item.event}</h4>
+                                                <p className="text-[11px] font-bold text-slate-400 uppercase mt-1">{item.location}</p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </main>
+
+                    <footer className="fixed bottom-0 left-0 w-full p-6 flex justify-center z-50 pointer-events-none">
+                        <div className="px-8 py-3 bg-white/90 backdrop-blur-xl rounded-full border border-slate-200 text-[10px] font-black uppercase text-indigo-600 tracking-[0.4em] shadow-2xl pointer-events-auto">
+                            DIAC 2026
+                        </div>
+                    </footer>
+                </div>
+            );
+        }
+
+        // --- COMPONENTS ---
+
+        function TabBtn({ id, icon, label, active, onClick }) {
+            return (
+                <button 
+                    onClick={() => onClick(id)} 
+                    className={`flex-1 py-3 rounded-3xl flex flex-col items-center gap-1 transition-all ${active === id ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400'}`}
+                >
+                    <Icon name={icon} size={18} />
+                    <span className="text-[9px] font-black uppercase tracking-tighter whimsical-font">{label}</span>
+                </button>
+            );
+        }
+
+        function Login({ onLogin }) {
+            const [u, setU] = useState(''); const [p, setP] = useState('');
+            const [err, setErr] = useState(''); const [loading, setLoading] = useState(false);
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                setLoading(true); setErr('');
+                try {
+                    const res = await fetch(`${SCRIPT_URL}?action=login&user=${encodeURIComponent(u)}&pass=${encodeURIComponent(p)}`);
+                    const result = await res.json();
+                    if (result.success) {
+                        localStorage.setItem('diac_auth_user', u);
+                        localStorage.setItem('diac_auth_hoc', result.isHoc);
+                        onLogin(result.isHoc);
+                    } else { setErr('Check credentials.'); }
+                } catch { setErr('Connection Error.'); }
+                finally { setLoading(false); }
+            };
+
+            return (
+                <div className="min-h-screen flex items-center justify-center p-8 bg-indigo-600 text-white">
+                    <div className="w-full max-w-sm text-center">
+                        <img src={APP_LOGO_URL} className="w-24 h-24 bg-white rounded-3xl p-3 mx-auto mb-8 shadow-2xl" />
+                        <h1 className="text-4xl font-black whimsical-font mb-8">STAFF LOGIN</h1>
+                        <form onSubmit={handleSubmit} className="space-y-4 text-left">
+                            <input type="text" placeholder="Username" className="w-full p-5 rounded-2xl text-slate-800 font-bold" value={u} onChange={e => setU(e.target.value)} />
+                            <input type="password" placeholder="Password" className="w-full p-5 rounded-2xl text-slate-800 font-bold" value={p} onChange={e => setP(e.target.value)} />
+                            {err && <p className="text-amber-300 font-bold text-center text-xs">{err}</p>}
+                            <button className="w-full bg-amber-400 text-amber-900 py-5 rounded-2xl font-black uppercase tracking-widest mt-4">
+                                {loading ? 'Checking...' : 'Unlock Hub'}
                             </button>
                         </form>
                     </div>
                 </div>
             );
+        }
 
-            if (loading) return (
-                <div className="min-h-screen bg-white flex flex-col items-center justify-center text-slate-900">
-                    <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-                    <p className="text-[10px] font-black uppercase tracking-[0.3em] text-indigo-600 animate-pulse whimsical-font text-lg">Mixing Colors...</p>
-                </div>
-            );
-
-            const InfoBlock = ({ label, value, icon, color = "text-slate-700" }) => {
-                if (!value || value === "N/A" || value === "" || value === " ") return null;
-                return (
-                    <div className="py-3 border-b border-slate-100 last:border-0">
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.15em] mb-1">{label}</p>
-                        <div className="flex items-start gap-3">
-                            {icon && <Icon name={icon} size={16} className="mt-0.5 text-slate-400 flex-shrink-0" />}
-                            <p className={`text-sm font-semibold break-words ${color}`}>{value}</p>
-                        </div>
-                    </div>
-                );
-            };
-
-            if (selectedStudent) {
-                return (
-                    <div className="min-h-screen bg-white pb-20 animate-fade-in relative">
-                        <header className="bg-indigo-600 text-white p-5 sticky top-0 z-50 flex items-center gap-4 shadow-md">
-                            <button onClick={() => setSelectedStudent(null)} className="p-2 -ml-2 active:bg-indigo-700 rounded-full transition-colors"><Icon name="chevron-left" /></button>
-                            <h1 className="text-lg font-bold truncate whimsical-font tracking-wide">{selectedStudent.displayName}</h1>
-                        </header>
-                        <div className="max-w-2xl mx-auto p-6 space-y-8 relative z-10">
-                            <div className="flex flex-col items-center text-center">
-                                <div className="w-32 h-32 rounded-[32px] overflow-hidden shadow-xl border-4 border-white ring-8 ring-indigo-50 mb-4 bg-slate-50 flex items-center justify-center rotate-2">
-                                    {selectedStudent.photoUrl ? <img src={getDirectDriveUrl(selectedStudent.photoUrl)} className="w-full h-full object-cover" crossOrigin="anonymous" /> : <Icon name="user" size={48} className="text-slate-200" />}
-                                </div>
-                                <h2 className="text-3xl font-black text-slate-900 whimsical-font">{selectedStudent.displayName}</h2>
-                                <div className="flex gap-2 mt-3">
-                                    <span className="text-[10px] font-black bg-amber-100 text-amber-700 px-3 py-1.5 rounded-full uppercase tracking-wider">Cabin {selectedStudent.cabin}</span>
-                                    {selectedStudent.pronouns && <span className="text-[10px] font-black bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-full uppercase tracking-wider">{selectedStudent.pronouns}</span>}
-                                </div>
-                            </div>
-                            
-                            <section>
-                                <h3 className="text-[11px] font-black text-indigo-500 uppercase tracking-widest mb-3 flex items-center gap-2 whimsical-font text-lg">
-                                    <Icon name="palette" size={16} /> Student Profile
-                                </h3>
-                                <div className="bg-white p-5 rounded-3xl border-2 border-indigo-50 shadow-sm art-card">
-                                    <InfoBlock label="School" value={selectedStudent.school} icon="school" />
-                                    <InfoBlock label="Birthdate" value={selectedStudent.dob} icon="calendar" />
-                                </div>
-                            </section>
-
-                            {(selectedStudent.dietary || selectedStudent.allergies) && (
-                                <section>
-                                    <h3 className="text-[11px] font-black text-rose-500 uppercase tracking-widest mb-3 flex items-center gap-2 whimsical-font text-lg">
-                                        <Icon name="heart" size={16} /> Health & Wellness
-                                    </h3>
-                                    <div className="bg-white border-2 border-rose-50 p-5 rounded-3xl shadow-sm art-card">
-                                        <InfoBlock label="Dietary" value={selectedStudent.dietary} icon="utensils" color="text-rose-600" />
-                                        <InfoBlock label="Allergies" value={selectedStudent.allergies} icon="alert-circle" color="text-rose-600" />
-                                    </div>
-                                </section>
-                            )}
-
-                            <section>
-                                <h3 className="text-[11px] font-black text-emerald-500 uppercase tracking-widest mb-3 flex items-center gap-2 whimsical-font text-lg">
-                                    <Icon name="phone" size={16} /> Contact
-                                </h3>
-                                <div className="bg-white border-2 border-emerald-50 p-5 rounded-3xl shadow-sm art-card">
-                                    <InfoBlock label="Guardian" value={selectedStudent.emergency.name} icon="user" />
-                                    <InfoBlock label="Phone" value={selectedStudent.emergency.phone} icon="phone" />
-                                    <InfoBlock label="Email" value={selectedStudent.emergency.email} icon="mail" />
-                                </div>
-                            </section>
-
-                            <section>
-                                <h3 className="text-[11px] font-black text-amber-500 uppercase tracking-widest mb-3 flex items-center gap-2 whimsical-font text-lg">
-                                    <Icon name="calendar-days" size={16} /> Program Schedule
-                                </h3>
-                                <div className="space-y-3">
-                                    {selectedStudent.sessions.map((session) => (
-                                        <div key={session.id} className="flex gap-4 p-4 bg-white border-2 border-amber-50 rounded-2xl shadow-sm art-card">
-                                            <div className="w-10 h-10 bg-amber-100 text-amber-700 rounded-xl flex items-center justify-center font-black text-sm flex-shrink-0">
-                                                S{session.id}
-                                            </div>
-                                            <div className="flex-1 min-w-0">
-                                                <p className="font-bold text-slate-900 truncate">{session.activity || "No Activity Selected"}</p>
-                                                <div className="flex items-center gap-1.5 text-slate-400 mt-1">
-                                                    <Icon name="map-pin" size={12} />
-                                                    <p className="text-[11px] font-bold uppercase tracking-wide truncate">{session.venue || "TBA"}</p>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </section>
-                        </div>
-                    </div>
-                );
-            }
-
-            if (selectedCabin) {
-                return (
-                    <div className="min-h-screen bg-slate-50 pb-20 animate-fade-in">
-                        <header className="bg-indigo-600 text-white p-5 sticky top-0 z-50 flex items-center gap-4 shadow-md">
-                            <button onClick={() => setSelectedCabin(null)} className="p-2 -ml-2 active:bg-indigo-700 rounded-full transition-colors"><Icon name="chevron-left" /></button>
-                            <h1 className="text-lg font-bold whimsical-font tracking-widest">Cabin {selectedCabin.name}</h1>
-                        </header>
-                        <main className="max-w-2xl mx-auto p-4 space-y-2">
-                            {selectedCabin.students.map(s => (
-                                <button key={s.uid} onClick={() => setSelectedStudent(s)} className="bg-white p-3 rounded-2xl border-2 border-slate-100 flex items-center justify-between w-full shadow-sm active:scale-95 transition-all text-left group hover:border-indigo-200">
-                                    <div className="flex items-center gap-4">
-                                        <div className="w-12 h-12 rounded-2xl bg-indigo-50 overflow-hidden border border-indigo-100 flex items-center justify-center group-hover:rotate-3 transition-transform">
-                                            {s.photoUrl ? <img src={getDirectDriveUrl(s.photoUrl)} className="w-full h-full object-cover" crossOrigin="anonymous" /> : <Icon name="user" className="text-indigo-200" size={20} />}
-                                        </div>
-                                        <div className="font-bold text-slate-900 leading-tight group-hover:text-indigo-600">{s.displayName}</div>
-                                    </div>
-                                    <Icon name="chevron-right" size={18} className="text-slate-300 mr-2 group-hover:text-indigo-400" />
-                                </button>
-                            ))}
-                        </main>
-                    </div>
-                );
-            }
-
+        function LoadingScreen() {
             return (
-                <div className="min-h-screen pb-24">
-                    <header className="bg-indigo-600 text-white p-5 sticky top-0 z-50 flex justify-between items-center shadow-xl">
-                        <div className="flex items-center gap-3">
-                            <div className="bg-white p-1 rounded-xl shadow-inner -rotate-3 overflow-hidden logo-placeholder">
-                                <img 
-                                    src={APP_LOGO_URL} 
-                                    alt="Logo" 
-                                    className="w-8 h-8 object-contain"
-                                    crossOrigin="anonymous"
-                                    onError={(e) => { 
-                                        e.target.onerror = null; 
-                                        e.target.src = "https://via.placeholder.com/150/FFFFFF/6366f1?text=DIAC"; 
-                                    }}
-                                />
-                            </div>
-                            <div>
-                                <h1 className="text-xl font-black italic tracking-tighter leading-none whimsical-font">DIAC HUB</h1>
-                                <p className="text-[9px] text-indigo-200 font-bold uppercase tracking-[0.2em] mt-1">{refreshing ? 'Syncing Palette...' : `Inspiring ${processedStudents.length} Artists`}</p>
-                            </div>
-                        </div>
-                        <div className="flex gap-2">
-                            <button onClick={fetchData} className="p-2 bg-indigo-500 rounded-xl active:scale-90 transition-all border border-indigo-400 shadow-inner"><Icon name="refresh-cw" size={18} className={refreshing ? 'animate-spin' : ''}/></button>
-                            <button onClick={handleLogout} className="p-2 bg-indigo-500 rounded-xl text-rose-300 active:scale-90 transition-all border border-indigo-400 shadow-inner"><Icon name="log-out" size={18}/></button>
-                        </div>
-                    </header>
-
-                    <main className="max-w-2xl mx-auto p-4 space-y-4">
-                        <nav className="flex gap-2 mb-2 p-1 bg-white/50 backdrop-blur-sm rounded-2xl border border-white/50">
-                            {['students', 'cabins', 'schedule'].map(tab => (
-                                <button key={tab} onClick={() => setActiveTab(tab)} className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whimsical-font text-sm ${activeTab === tab ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'text-slate-400 hover:text-indigo-400'}`}>
-                                    {tab}
-                                </button>
-                            ))}
-                        </nav>
-                        
-                        {activeTab === 'students' && (
-                            <>
-                                <div className="relative">
-                                    <Icon name="search" size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                                    <input 
-                                        type="text" 
-                                        placeholder="Find an artist..." 
-                                        className="w-full bg-white border-2 border-slate-100 py-4 pl-12 pr-4 rounded-[24px] shadow-sm outline-none focus:border-indigo-300 transition-all text-sm font-medium"
-                                        value={searchQuery} 
-                                        onChange={e => setSearchQuery(e.target.value)} 
-                                    />
-                                </div>
-                                <div className="grid gap-2">
-                                    {filteredStudents.map(s => (
-                                        <button key={s.uid} onClick={() => setSelectedStudent(s)} className="bg-white p-3 rounded-2xl border-2 border-slate-50 flex items-center justify-between w-full shadow-sm active:scale-95 transition-all text-left hover:border-indigo-100 group">
-                                            <div className="flex items-center gap-4">
-                                                <div className="w-14 h-14 rounded-2xl bg-indigo-50 overflow-hidden border border-indigo-50 flex items-center justify-center group-hover:scale-105 transition-transform">
-                                                    {s.photoUrl ? <img src={getDirectDriveUrl(s.photoUrl)} className="w-full h-full object-cover" crossOrigin="anonymous" /> : <Icon name="user" className="text-indigo-200" size={24} />}
-                                                </div>
-                                                <div>
-                                                    <div className="font-bold text-slate-900 leading-tight group-hover:text-indigo-600">{s.displayName}</div>
-                                                    <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">Cabin {s.cabin} • {s.school || 'DDSB'}</div>
-                                                </div>
-                                            </div>
-                                            <Icon name="chevron-right" size={18} className="text-slate-300 mr-2 group-hover:text-indigo-400 transition-colors" />
-                                        </button>
-                                    ))}
-                                </div>
-                            </>
-                        )}
-
-                        {activeTab === 'cabins' && (
-                            <div className="grid gap-4 animate-fade-in">
-                                {cabins.map(cabin => (
-                                    <button key={cabin.name} onClick={() => setSelectedCabin(cabin)} className="bg-white p-5 rounded-[32px] border-2 border-slate-50 shadow-sm flex items-center justify-between w-full active:scale-95 transition-all text-left group hover:border-indigo-100 art-card">
-                                        <div className="flex items-center gap-5">
-                                            <div className="w-14 h-14 bg-amber-50 text-amber-600 rounded-[20px] flex items-center justify-center font-black text-lg group-active:bg-amber-500 group-active:text-white transition-all whimsical-font rotate-2 group-hover:rotate-0">{cabin.name.charAt(0)}</div>
-                                            <div>
-                                                <h3 className="font-bold text-slate-900 text-lg whimsical-font tracking-wide">Cabin {cabin.name}</h3>
-                                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{cabin.count} Artists</p>
-                                            </div>
-                                        </div>
-                                        <Icon name="chevron-right" className="text-slate-300 group-hover:text-amber-400" />
-                                    </button>
-                                ))}
-                            </div>
-                        )}
-
-                        {activeTab === 'schedule' && (
-                            <div className="bg-white rounded-[32px] border-2 border-slate-50 shadow-sm overflow-hidden animate-fade-in art-card">
-                                {schedule.length > 0 ? schedule.map((item, i) => (
-                                    <div key={i} className="p-5 flex gap-5 border-b border-slate-50 last:border-0 hover:bg-slate-50">
-                                        <div className="text-indigo-600 font-black text-xs min-w-[80px] pt-1 uppercase tracking-tighter whimsical-font text-sm">{item.time}</div>
-                                        <div>
-                                            <div className="font-bold text-slate-900 text-base">{item.event}</div>
-                                            <div className="text-[10px] text-slate-400 font-bold uppercase mt-1 flex items-center gap-1"><Icon name="map-pin" size={10} /> {item.location}</div>
-                                        </div>
-                                    </div>
-                                )) : (
-                                    <div className="p-10 text-center text-slate-400 text-sm font-bold uppercase tracking-widest whimsical-font">No Creative Plans Yet</div>
-                                )}
-                            </div>
-                        )}
-                    </main>
-                    
-                    <footer className="fixed bottom-0 left-0 w-full p-4 pointer-events-none flex justify-center z-40 safe-bottom">
-                        <div className="px-6 py-2 bg-indigo-600/10 backdrop-blur-md rounded-full border border-indigo-600/10 text-[9px] font-black uppercase text-indigo-600 tracking-[0.3em] whimsical-font">
-                            DIAC 2026
-                        </div>
-                    </footer>
+                <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50">
+                    <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mb-4"></div>
+                    <p className="whimsical-font text-2xl text-indigo-600 font-black animate-pulse">Syncing DIAC Hub...</p>
                 </div>
             );
         }
