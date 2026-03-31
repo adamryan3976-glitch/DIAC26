@@ -190,9 +190,15 @@
                         photoUrl: s.o || "",
                         dietary: s.p || "",
                         allergies: s.q || "",
+                        sessions: [
+                            { id: 1, activity: s.r, venue: s.s },
+                            { id: 2, activity: s.t, venue: s.u },
+                            { id: 3, activity: s.v, venue: s.w },
+                            { id: 4, activity: s.x, venue: s.y }
+                        ],
                         emergency: {
                             name: `${s.h || ''} ${s.i || ''}`.trim() || "Not Provided",
-                            phone: s.j || "",
+                            phone: s.j || s.k || "", // checking both J/K based on variations in source
                             email: s.l || ""
                         }
                     };
@@ -342,6 +348,29 @@
                                     <InfoBlock label="Guardian" value={selectedStudent.emergency.name} icon="user" />
                                     <InfoBlock label="Phone" value={selectedStudent.emergency.phone} icon="phone" />
                                     <InfoBlock label="Email" value={selectedStudent.emergency.email} icon="mail" />
+                                </div>
+                            </section>
+
+                            {/* Restore Program Schedule (Sessions 1-4) */}
+                            <section>
+                                <h3 className="text-[11px] font-black text-amber-500 uppercase tracking-widest mb-3 flex items-center gap-2 whimsical-font text-lg">
+                                    <Icon name="calendar-days" size={16} /> Program Schedule
+                                </h3>
+                                <div className="space-y-3">
+                                    {selectedStudent.sessions.map((session) => (
+                                        <div key={session.id} className="flex gap-4 p-4 bg-white border-2 border-amber-50 rounded-2xl shadow-sm art-card">
+                                            <div className="w-10 h-10 bg-amber-100 text-amber-700 rounded-xl flex items-center justify-center font-black text-sm flex-shrink-0">
+                                                S{session.id}
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <p className="font-bold text-slate-900 truncate">{session.activity || "No Activity Selected"}</p>
+                                                <div className="flex items-center gap-1.5 text-slate-400 mt-1">
+                                                    <Icon name="map-pin" size={12} />
+                                                    <p className="text-[11px] font-bold uppercase tracking-wide truncate">{session.venue || "TBA"}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
                                 </div>
                             </section>
                         </div>
