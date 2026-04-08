@@ -141,35 +141,20 @@
                     reportedBy: currentUser,
                     status: status 
                 };
-                
                 try {
                     setRefreshing(true);
-                    
-                    // Attempt standard JSON POST
-                    // We remove 'no-cors' because it prevents the server from receiving the JSON body properly
-                    const response = await fetch(SCRIPT_URL, {
-                        method: 'POST',
-                        body: JSON.stringify(payload)
+                    // Use mode: 'no-cors' to prevent the Failed to Fetch error common with Apps Script POSTs
+                    await fetch(SCRIPT_URL, { 
+                        method: 'POST', 
+                        mode: 'no-cors',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload) 
                     });
-                    
-                    // Small delay to allow Google Sheets to process
-                    setTimeout(fetchData, 1500);
-                } catch (e) {
-                    console.warn("Standard POST failed, trying text/plain fallback...");
-                    try {
-                        // Fallback: Using text/plain can sometimes bypass CORS issues with Google Apps Script
-                        // while still allowing the payload to be sent in the body.
-                        await fetch(SCRIPT_URL, {
-                            method: 'POST',
-                            mode: 'no-cors',
-                            headers: { 'Content-Type': 'text/plain' },
-                            body: JSON.stringify(payload)
-                        });
-                        setTimeout(fetchData, 1500);
-                    } catch (err) {
-                        console.error("All submission attempts failed", err);
-                        setRefreshing(false);
-                    }
+                    // Since no-cors doesn't allow reading response, we wait a moment then refresh
+                    setTimeout(fetchData, 1200);
+                } catch (e) { 
+                    console.error("Attendance submission failed", e);
+                    setRefreshing(false);
                 }
             };
 
@@ -424,3 +409,4 @@
     </script>
 </body>
 </html>
+
