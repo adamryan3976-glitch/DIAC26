@@ -69,6 +69,31 @@
         const CAMP_MAP_IMAGE_URL = `https://lh3.googleusercontent.com/d/${CAMP_MAP_FILE_ID}=s1600`;
         const CAMP_MAP_FULLSCREEN_URL = `https://lh3.googleusercontent.com/d/${CAMP_MAP_FILE_ID}=s0`;
 
+        // Period time windows, used to default the Attendance tab to whatever
+        // session is currently running. Expressed in minutes-since-midnight,
+        // local device time (staff phones are expected to be on camp-local time).
+        const PERIOD_TIMES = [
+            { session: '1', start: 9 * 60 + 0, end: 10 * 60 + 15 },   // 9:00 - 10:15
+            { session: '2', start: 10 * 60 + 30, end: 11 * 60 + 45 }, // 10:30 - 11:45
+            { session: '3', start: 13 * 60 + 30, end: 14 * 60 + 45 }, // 1:30 - 2:45 PM
+            { session: '4', start: 15 * 60 + 0, end: 16 * 60 + 15 },  // 3:00 - 4:15 PM
+        ];
+
+        // Returns the session currently running, or — between/outside periods
+        // — the next one coming up today, or the last one if the day's
+        // periods are already over.
+        function getCurrentPeriod(now) {
+            const d = now || new Date();
+            const minutes = d.getHours() * 60 + d.getMinutes();
+            for (const p of PERIOD_TIMES) {
+                if (minutes >= p.start && minutes < p.end) return p.session;
+            }
+            for (const p of PERIOD_TIMES) {
+                if (minutes < p.start) return p.session;
+            }
+            return PERIOD_TIMES[PERIOD_TIMES.length - 1].session;
+        }
+
         const Icon = ({ name, size = 20, className = "" }) => {
             useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [name]);
             return <i data-lucide={name} style={{ width: size, height: size }} className={className}></i>;
@@ -121,7 +146,8 @@
             const [refreshing, setRefreshing] = useState(false);
             const [lastUpdated, setLastUpdated] = useState(null);
 
-            const [attSession, setAttSession] = useState('1');
+            const [attSession, setAttSession] = useState(() => getCurrentPeriod());
+            const [attSessionAuto, setAttSessionAuto] = useState(true); // false once staff manually picks a session
             const [attActivity, setAttActivity] = useState('');
             const [currentPage, setCurrentPage] = useState(1);
             
@@ -287,10 +313,41 @@
                 finally { setLoading(false); setRefreshing(false); setHocSyncingId(null); }
             };
 
+            // Re-sync the Attendance tab to whichever period is running right
+            // now each time staff open that tab — but only while they haven't
+            // manually picked a different session, so it never fights a
+            // deliberate choice.
+            useEffect(() => {
+                if (activeTab === 'attendance' && attSessionAuto) {
+                    setAttSession(getCurrentPeriod());
+                }
+            }, [activeTab]);
+
+            // Auto-refresh while an HOC is viewing the HOC tab, so if two HOCs
+            // are both out looking for the same student, whichever one finds
+            // them first shows up for the other within a few seconds instead
+            // of requiring a manual pull-to-refresh.
+            useEffect(() => {
+                if (!isAuthenticated || !isHoc || activeTab !== 'hoc') return;
+                const interval = setInterval(() => { fetchData(); }, 20000);
+                return () => clearInterval(interval);
+            }, [isAuthenticated, isHoc, activeTab, sessionToken]);
+
             const stageStatusChange = (studentName, newStatus) => {
                 const key = `${studentName}-${attSession}-${attActivity}`;
                 setLocalAttendance(prev => ({ ...prev, [key]: newStatus }));
             };
+
+            // Every enrolled student defaults to "Present" until the teacher
+            // flags an exception — this both matches how attendance is
+            // normally taken (call out exceptions, not every present kid)
+            // and, critically, means SUBMIT always records the full class
+            // roster (not just the students someone tapped). That full-roster
+            // record on every submission is what lets the HOC tab tell "this
+            // class hasn't done attendance at all" apart from "this class did
+            // attendance and everyone was present" — both used to look
+            // identical (zero rows) before this change.
+            const DEFAULT_STATUS = 'Present';
 
             const handleNoteChange = (id, text) => {
                 setHocNotes(prev => ({ ...prev, [id]: text }));
@@ -335,17 +392,25 @@
                 enrolledInCurrent.forEach(s => {
                     const name = s.displayName;
                     const key = `${name}-${attSession}-${attActivity}`;
-                    const status = localAttendance[key] || 'Not Completed';
-                    
+                    const status = localAttendance[key] || DEFAULT_STATUS;
+
                     const existing = absences.find(a => {
                         const absDate = new Date(a.timestamp).toDateString();
-                        return a.studentName === name && 
-                               String(a.session) === String(attSession) && 
+                        return a.studentName === name &&
+                               String(a.session) === String(attSession) &&
                                a.activity === attActivity &&
                                absDate === today;
                     });
 
-                    if (status !== 'Not Completed' || existing) {
+                    // Only include a student when there's no record for them
+                    // yet (first-time submission for the class — this is what
+                    // establishes "this class has done attendance" even when
+                    // everyone's present) or their status has actually
+                    // changed since what we last saw from the server. An
+                    // untouched student is never resent, so a teacher fixing
+                    // one student's status later can't accidentally overwrite
+                    // an HOC's update to a different student with stale data.
+                    if (!existing || existing.status !== status) {
                         const studentData = students.find(st => st.preferredName === name);
                         updates.push({
                             id: existing ? existing.id : null,
@@ -359,6 +424,11 @@
                         });
                     }
                 });
+
+                if (updates.length === 0) {
+                    setIsSubmitting(false);
+                    return;
+                }
 
                 try {
                     const res = await fetch(SCRIPT_URL, {
@@ -420,7 +490,7 @@
                 return enrolledInCurrent.some(s => {
                     const name = s.displayName;
                     const key = `${name}-${attSession}-${attActivity}`;
-                    const localStatus = localAttendance[key] || 'Not Completed';
+                    const localStatus = localAttendance[key] || DEFAULT_STATUS;
                     const serverAbsence = absences.find(a => 
                         a.studentName === name && 
                         String(a.session) === String(attSession) && 
@@ -514,12 +584,31 @@
                 </div>
             );
 
-            // Filter for HOC Tab: Only show if NOT present
-            const activeHocAbsences = absences.filter(a => 
-                String(a.session) === String(hocSession) && 
-                new Date(a.timestamp).toDateString() === new Date().toDateString() &&
-                a.status !== 'Present'
+            // Filter for HOC Tab: Only show if NOT present. Sorted so
+            // still-unlocated students ("Absent") surface above ones already
+            // found and marked Late/Excused, so HOCs see who still needs
+            // locating first.
+            const HOC_STATUS_PRIORITY = { 'Absent - Unknown': 0, 'Late': 1, 'Absent - Excused': 2 };
+            const activeHocAbsences = absences
+                .filter(a =>
+                    String(a.session) === String(hocSession) &&
+                    new Date(a.timestamp).toDateString() === new Date().toDateString() &&
+                    a.status !== 'Present'
+                )
+                .sort((a, b) => (HOC_STATUS_PRIORITY[a.status] ?? 99) - (HOC_STATUS_PRIORITY[b.status] ?? 99));
+
+            // Classes that have submitted NO attendance records at all for
+            // this session today (including all-present submissions, which
+            // now always write a full-roster record — see DEFAULT_STATUS
+            // above), so HOCs can chase down whichever teacher hasn't done
+            // attendance yet.
+            const submittedActivitiesThisSession = new Set(
+                absences
+                    .filter(a => String(a.session) === String(hocSession) && new Date(a.timestamp).toDateString() === new Date().toDateString())
+                    .map(a => a.activity)
             );
+            const missingAttendanceClasses = (classes[`S${hocSession}`] || [])
+                .filter(c => !submittedActivitiesThisSession.has(c));
 
             // Filter for Recent Reports block
             const recentReportsList = [...absences]
@@ -623,7 +712,7 @@
                                 <div className="bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm space-y-4">
                                     <div className="flex gap-2">
                                         {[1, 2, 3, 4].map(num => (
-                                            <button key={num} onClick={() => {setAttSession(num.toString()); setAttActivity('');}} className={`flex-1 py-3 rounded-xl text-[10px] font-black border transition-all ${attSession === num.toString() ? 'bg-indigo-600 border-indigo-600 text-white shadow-md' : 'bg-slate-50 border-slate-100 text-slate-400'}`}>S{num}</button>
+                                            <button key={num} onClick={() => {setAttSession(num.toString()); setAttActivity(''); setAttSessionAuto(false);}} className={`flex-1 py-3 rounded-xl text-[10px] font-black border transition-all ${attSession === num.toString() ? 'bg-indigo-600 border-indigo-600 text-white shadow-md' : 'bg-slate-50 border-slate-100 text-slate-400'}`}>S{num}</button>
                                         ))}
                                     </div>
                                     <div className="relative">
@@ -655,12 +744,12 @@
                                             {enrolledInCurrent.map((s, i) => {
                                                 const name = s.displayName;
                                                 const key = `${name}-${attSession}-${attActivity}`;
-                                                const currentStatus = localAttendance[key] || 'Not Completed';
-                                                
+                                                const currentStatus = localAttendance[key] || DEFAULT_STATUS;
+
                                                 const today = new Date().toDateString();
-                                                const serverAbsence = absences.find(a => 
-                                                    a.studentName === name && 
-                                                    String(a.session) === String(attSession) && 
+                                                const serverAbsence = absences.find(a =>
+                                                    a.studentName === name &&
+                                                    String(a.session) === String(attSession) &&
                                                     a.activity === attActivity &&
                                                     new Date(a.timestamp).toDateString() === today
                                                 );
@@ -675,7 +764,7 @@
                                                 ];
 
                                                 return (
-                                                    <div key={i} className={`bg-white/80 backdrop-blur-sm p-4 rounded-3xl border shadow-sm transition-all ${currentStatus === 'Not Completed' ? 'border-amber-200' : 'border-slate-100'}`}>
+                                                    <div key={i} className={`bg-white/80 backdrop-blur-sm p-4 rounded-3xl border shadow-sm transition-all ${currentStatus !== 'Present' ? 'border-amber-200' : 'border-slate-100'}`}>
                                                         <div className="font-bold text-slate-800 text-sm mb-3 px-1">{name}</div>
                                                         <div className="grid grid-cols-4 gap-1.5">
                                                             {isSyncing ? (
@@ -684,7 +773,7 @@
                                                                 options.map(opt => (
                                                                     <button
                                                                         key={opt.val}
-                                                                        onClick={() => stageStatusChange(name, currentStatus === opt.val ? 'Not Completed' : opt.val)}
+                                                                        onClick={() => stageStatusChange(name, currentStatus === opt.val ? DEFAULT_STATUS : opt.val)}
                                                                         className={`py-2.5 rounded-xl text-[9px] font-black uppercase border transition-all ${currentStatus === opt.val ? opt.color : 'bg-slate-50 border-slate-100 text-slate-400'}`}
                                                                     >
                                                                         {opt.label}
@@ -712,11 +801,28 @@
                                     </div>
                                 </div>
 
+                                {missingAttendanceClasses.length > 0 && (
+                                    <div className="bg-amber-50 border border-amber-200 rounded-[2rem] p-5 animate-fade-in">
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <Icon name="alert-triangle" size={16} className="text-amber-600" />
+                                            <h3 className="text-xs font-black text-amber-700 uppercase tracking-widest">Attendance Not Yet Submitted — S{hocSession}</h3>
+                                        </div>
+                                        <div className="flex flex-wrap gap-2">
+                                            {missingAttendanceClasses.map((c, i) => (
+                                                <span key={i} className="px-3 py-1.5 bg-white/80 text-amber-700 rounded-full text-xs font-bold border border-amber-200">{c}</span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
                                 <div className="space-y-3">
                                     {activeHocAbsences.map((a, i) => {
                                         // Retrieve note safely handling multiple possible casing keys
                                         const currentNote = hocNotes[a.id] !== undefined ? hocNotes[a.id] : (a.note || a.Note || a.Notes || a.notes || "");
-                                        
+                                        const badgeClass = a.status === 'Absent - Excused' ? 'bg-amber-50 text-amber-600'
+                                            : a.status === 'Late' ? 'bg-indigo-50 text-indigo-600'
+                                            : 'bg-rose-50 text-rose-600';
+
                                         return (
                                             <div key={a.id || i} className="bg-white/80 backdrop-blur-sm p-4 rounded-3xl shadow-sm border border-slate-100">
                                                 <div className="flex justify-between items-start mb-3">
@@ -725,16 +831,16 @@
                                                         <div className="text-[9px] text-slate-400 font-bold uppercase mt-1">{a.cabin} • {a.activity}</div>
                                                     </div>
                                                     <div className="text-right">
-                                                        <div className={`text-[9px] font-black px-2 py-1 rounded-lg uppercase ${a.status.includes('Excused') ? 'bg-amber-50 text-amber-600' : 'bg-rose-50 text-rose-600'}`}>{a.status}</div>
+                                                        <div className={`text-[9px] font-black px-2 py-1 rounded-lg uppercase ${badgeClass}`}>{a.status}</div>
                                                         <div className="text-[8px] text-slate-400 mt-1 uppercase">Rep: {a.reportedBy}</div>
                                                     </div>
                                                 </div>
-                                                
+
                                                 {/* Added Note Input Field */}
                                                 <div className="mb-3">
-                                                    <input 
-                                                        type="text" 
-                                                        placeholder="Add a note... (e.g. 'At nurse's station')" 
+                                                    <input
+                                                        type="text"
+                                                        placeholder="Add a note... (e.g. 'At nurse's station')"
                                                         value={currentNote}
                                                         onChange={e => handleNoteChange(a.id, e.target.value)}
                                                         className="w-full text-xs font-medium p-2.5 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:border-indigo-300 text-slate-600 placeholder-slate-400 transition-colors"
@@ -746,8 +852,8 @@
                                                         <div className="col-span-2 py-2.5 rounded-xl text-[10px] font-black uppercase text-center bg-slate-50 text-slate-400 animate-pulse">Syncing...</div>
                                                     ) : (
                                                         <>
+                                                            <button onClick={() => handleHocUpdate(a.studentName, a, 'Late', currentNote)} className={`py-2.5 rounded-xl text-[10px] font-black uppercase border transition-all ${a.status === 'Late' ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-100 bg-slate-50 text-indigo-600 hover:bg-indigo-50'}`}>Late</button>
                                                             <button onClick={() => handleHocUpdate(a.studentName, a, 'Absent - Excused', currentNote)} className={`py-2.5 rounded-xl text-[10px] font-black uppercase border transition-all ${a.status === 'Absent - Excused' ? 'bg-amber-500 border-amber-500 text-white' : 'bg-slate-50 border-slate-100 text-amber-600 hover:bg-amber-50'}`}>Excused</button>
-                                                            <button onClick={() => handleHocUpdate(a.studentName, a, 'Resolved', currentNote)} className={`py-2.5 rounded-xl text-[10px] font-black uppercase border transition-all ${a.status === 'Resolved' ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-100 bg-slate-50 text-indigo-600 hover:bg-indigo-50'}`}>Resolved</button>
                                                         </>
                                                     )}
                                                 </div>
