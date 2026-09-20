@@ -152,13 +152,16 @@
                 window.location.reload();
             };
 
-            // Initialize the Google OAuth popup client. This opens a real popup
-            // window on accounts.google.com (a full top-level page, not an
-            // iframe), so it works even in browsers that block third-party
-            // cookies/iframes by default — including every browser on iOS,
-            // which all run on WebKit and inherit that restriction. The
-            // previously-used rendered Sign-In button relies on an iframe and
-            // silently fails to appear in that situation.
+            // Initialize the Google OAuth client using a full-page redirect
+            // rather than a popup. Google's own guidance is to avoid the popup
+            // UX mode on mobile: many mobile browsers don't cleanly block a
+            // JS-opened popup — instead they silently steer it into an
+            // already-open background tab, showing whatever was last loaded
+            // there instead of Google's sign-in page. A redirect never opens
+            // a second window, so it can't be hijacked that way. Because the
+            // page fully reloads after the redirect back, the same callback
+            // must be (and is) re-registered on every mount — which this
+            // effect already does.
             useEffect(() => {
                 if (isAuthenticated) return;
                 let cancelled = false;
@@ -169,6 +172,8 @@
                         const client = google.accounts.oauth2.initTokenClient({
                             client_id: GOOGLE_CLIENT_ID,
                             scope: 'https://www.googleapis.com/auth/userinfo.email',
+                            ux_mode: 'redirect',
+                            redirect_uri: window.location.origin + window.location.pathname,
                             callback: handleGoogleSsoCallback
                         });
                         setTokenClient(client);
@@ -182,6 +187,12 @@
             }, [isAuthenticated]);
 
             const handleGoogleSsoCallback = async (response) => {
+                // The redirect flow returns the token in the URL fragment;
+                // clear it immediately so it's never left sitting around in
+                // browser history.
+                if (window.location.hash) {
+                    window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+                }
                 if (!response || response.error) {
                     setIsLoggingIn(false);
                     if (response && response.error !== 'popup_closed' && response.error !== 'popup_closed_by_user') {
