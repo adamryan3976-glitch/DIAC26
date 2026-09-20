@@ -60,7 +60,14 @@
         const APP_LOGO_URL = "https://raw.githubusercontent.com/adamryan3976-glitch/DIAC26/main/diaclogo.png";
         const PAGE_SIZE = 100;
         const GOOGLE_CLIENT_ID = "241712157669-1huukafbcpsifc4v35op6o80qjb10r0r.apps.googleusercontent.com";
-        const TAB_LABELS = { students: 'Artists', attendance: 'attendance', hoc: 'hoc', schedule: 'schedule', massage: 'Massage', duty: 'Duty' };
+        const TAB_LABELS = { students: 'Artists', attendance: 'attendance', hoc: 'hoc', schedule: 'schedule', massage: 'Massage', duty: 'Duty', map: 'Map' };
+
+        // Camp property map, stored as a Google Drive image. The file must be
+        // shared as "Anyone with the link" for these direct-view URLs to load
+        // without asking staff to sign in to Drive separately.
+        const CAMP_MAP_FILE_ID = "1uTp8Q_kTQgnnWPIlo0cqwRUo3nkBEnr9";
+        const CAMP_MAP_IMAGE_URL = `https://lh3.googleusercontent.com/d/${CAMP_MAP_FILE_ID}=s1600`;
+        const CAMP_MAP_FULLSCREEN_URL = `https://lh3.googleusercontent.com/d/${CAMP_MAP_FILE_ID}=s0`;
 
         const Icon = ({ name, size = 20, className = "" }) => {
             useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [name]);
@@ -565,7 +572,7 @@
                             <div className="text-center text-[9px] font-bold text-slate-400 uppercase tracking-widest">Updated {lastUpdated}</div>
                         )}
                         <nav className="flex bg-white/70 backdrop-blur-md p-1 rounded-2xl shadow-sm border border-white overflow-x-auto no-scrollbar">
-                            {['students', 'attendance', 'hoc', 'schedule', 'massage', 'duty'].map(tab => (
+                            {['students', 'attendance', 'hoc', 'schedule', 'massage', 'duty', 'map'].map(tab => (
                                 (tab !== 'hoc' || isHoc) &&
                                 <button key={tab} onClick={() => setActiveTab(tab)} className={`flex-1 min-w-[90px] py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === tab ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400'}`}>
                                     {TAB_LABELS[tab] || tab}
@@ -846,6 +853,36 @@
                                 )) : (
                                     <p className="text-center py-8 text-slate-400 text-xs font-bold italic">No duty assignments scheduled</p>
                                 )}
+                            </div>
+                        )}
+
+                        {activeTab === 'map' && (
+                            <div className="space-y-4 animate-fade-in">
+                                <div className="bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm">
+                                    <h2 className="text-xl font-black text-slate-800 mb-1 whimsical-font italic">Camp Map</h2>
+                                    <p className="text-xs text-slate-400 font-medium">Tap the map to open it full-screen and zoom in.</p>
+                                </div>
+                                <a
+                                    href={CAMP_MAP_FULLSCREEN_URL}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="block bg-white/70 backdrop-blur-md rounded-[2rem] border border-white shadow-sm overflow-hidden"
+                                >
+                                    <img
+                                        src={CAMP_MAP_IMAGE_URL}
+                                        alt="Camp property map"
+                                        className="w-full h-auto block"
+                                    />
+                                </a>
+                                <a
+                                    href={CAMP_MAP_FULLSCREEN_URL}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white font-black text-xs uppercase tracking-widest py-3.5 rounded-2xl shadow-sm"
+                                >
+                                    <Icon name="maximize-2" size={16} />
+                                    Open Full-Screen
+                                </a>
                             </div>
                         )}
                     </main>
