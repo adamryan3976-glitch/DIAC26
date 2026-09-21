@@ -60,7 +60,7 @@
         const APP_LOGO_URL = "https://raw.githubusercontent.com/adamryan3976-glitch/DIAC26/main/diaclogo.png";
         const PAGE_SIZE = 100;
         const GOOGLE_CLIENT_ID = "241712157669-1huukafbcpsifc4v35op6o80qjb10r0r.apps.googleusercontent.com";
-        const TAB_LABELS = { students: 'Artists', attendance: 'attendance', hoc: 'hoc', schedule: 'schedule', massage: 'Massage', duty: 'Duty', map: 'Map' };
+        const TAB_LABELS = { students: 'Artists', attendance: 'attendance', hoc: 'hoc', schedule: 'schedule', massage: 'Massage', duty: 'Duty', map: 'Map', housing: 'Housing' };
 
         // Camp property map, stored as a Google Drive image. The file must be
         // shared as "Anyone with the link" for these direct-view URLs to load
@@ -140,6 +140,7 @@
             const [attStudents, setAttStudents] = useState([]);
             const [massageSchedule, setMassageSchedule] = useState([]);
             const [dutyRoster, setDutyRoster] = useState([]);
+            const [staffHousing, setStaffHousing] = useState([]);
             
             const [loading, setLoading] = useState(true);
             const [selectedStudent, setSelectedStudent] = useState(null);
@@ -264,7 +265,7 @@
                 setRefreshing(true);
                 setFetchError('');
                 try {
-                    const endpoints = ['students', 'schedule', 'absences', 'classes', 'attStudents', 'massageSchedule', 'duty'];
+                    const endpoints = ['students', 'schedule', 'absences', 'classes', 'attStudents', 'massageSchedule', 'duty', 'housing'];
                     const results = await Promise.all(
                         endpoints.map(ep =>
                             fetch(`${SCRIPT_URL}?action=${ep}&session=${encodeURIComponent(token)}`)
@@ -303,6 +304,7 @@
                     if (results[4] && !results[4].error) setAttStudents(results[4]);
                     if (results[5] && !results[5].error) setMassageSchedule(results[5]);
                     if (results[6] && !results[6].error) setDutyRoster(results[6]);
+                    if (results[7] && !results[7].error) setStaffHousing(results[7]);
 
                     if (!failed) {
                         setLastUpdated(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
@@ -532,6 +534,21 @@
                 return groups;
             }, [dutyRoster]);
 
+            const groupedHousing = useMemo(() => {
+                if (!Array.isArray(staffHousing)) return [];
+                const groups = [];
+                const byLocation = {};
+                staffHousing.forEach(entry => {
+                    const locKey = entry.location || 'Unassigned';
+                    if (!byLocation[locKey]) {
+                        byLocation[locKey] = { location: locKey, rooms: [] };
+                        groups.push(byLocation[locKey]);
+                    }
+                    byLocation[locKey].rooms.push(entry);
+                });
+                return groups;
+            }, [staffHousing]);
+
             const DetailRow = ({ label, value, icon }) => (
                 <div className="flex items-start gap-4 p-4 bg-white/70 backdrop-blur-sm rounded-2xl border border-white shadow-sm">
                     <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl shrink-0"><Icon name={icon} size={18} /></div>
@@ -672,7 +689,7 @@
                             <div className="text-center text-[9px] font-bold text-slate-400 uppercase tracking-widest">Updated {lastUpdated}</div>
                         )}
                         <nav className="flex bg-white/70 backdrop-blur-md p-1 rounded-2xl shadow-sm border border-white overflow-x-auto no-scrollbar">
-                            {['students', 'attendance', 'hoc', 'schedule', 'massage', 'duty', 'map'].map(tab => (
+                            {['students', 'attendance', 'hoc', 'schedule', 'massage', 'duty', 'map', 'housing'].map(tab => (
                                 (tab !== 'hoc' || isHoc) &&
                                 <button key={tab} onClick={() => setActiveTab(tab)} className={`flex-1 min-w-[90px] py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === tab ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400'}`}>
                                     {TAB_LABELS[tab] || tab}
@@ -1000,6 +1017,46 @@
                                     <Icon name="maximize-2" size={16} />
                                     Open Full-Screen
                                 </a>
+                            </div>
+                        )}
+
+                        {activeTab === 'housing' && (
+                            <div className="space-y-4 animate-fade-in">
+                                <div className="bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm">
+                                    <h2 className="text-xl font-black text-slate-800 mb-1 whimsical-font italic">Staff Housing</h2>
+                                    <p className="text-xs text-slate-400 font-medium">Cabin and room assignments for staff this week.</p>
+                                </div>
+
+                                {groupedHousing.length > 0 ? groupedHousing.map((group, gi) => (
+                                    <div key={gi} className="bg-white/70 backdrop-blur-md rounded-[2rem] border border-white shadow-sm overflow-hidden">
+                                        <div className="px-6 py-3 bg-slate-900/90 text-white flex items-center gap-2">
+                                            <Icon name="home" size={14} />
+                                            <h3 className="text-xs font-black uppercase tracking-widest">{group.location}</h3>
+                                        </div>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-left min-w-[320px]">
+                                                <thead>
+                                                    <tr className="border-b border-slate-100">
+                                                        <th className="p-3 text-[10px] font-black text-slate-400 uppercase tracking-widest w-24">Room</th>
+                                                        <th className="p-3 text-[10px] font-black text-slate-400 uppercase tracking-widest">Staff</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {group.rooms.map((r, ri) => (
+                                                        <tr key={ri} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50">
+                                                            <td className="p-3 text-xs font-bold text-indigo-600 align-top whitespace-nowrap">{r.room}</td>
+                                                            <td className="p-3 text-xs text-slate-700 font-medium">
+                                                                {r.staff.length > 0 ? r.staff.join(', ') : <span className="text-slate-300 italic">Unassigned</span>}
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )) : (
+                                    <p className="text-center py-8 text-slate-400 text-xs font-bold italic">No housing assignments available</p>
+                                )}
                             </div>
                         )}
                     </main>
