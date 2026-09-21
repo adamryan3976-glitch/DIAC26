@@ -133,6 +133,7 @@
 
             const [activeTab, setActiveTab] = useState('students');
             const [searchQuery, setSearchQuery] = useState('');
+            const [dutySearchQuery, setDutySearchQuery] = useState('');
             const [students, setStudents] = useState([]);
             const [schedule, setSchedule] = useState([]);
             const [absences, setAbsences] = useState([]); 
@@ -521,9 +522,16 @@
 
             const groupedDuty = useMemo(() => {
                 if (!Array.isArray(dutyRoster)) return [];
+                const query = dutySearchQuery.toLowerCase().trim();
+                const filtered = query
+                    ? dutyRoster.filter(entry => {
+                        const whoText = Array.isArray(entry.who) ? entry.who.join(', ') : String(entry.who || '');
+                        return whoText.toLowerCase().includes(query);
+                    })
+                    : dutyRoster;
                 const groups = [];
                 const byDay = {};
-                dutyRoster.forEach(entry => {
+                filtered.forEach(entry => {
                     const dayKey = entry.day || 'Unscheduled';
                     if (!byDay[dayKey]) {
                         byDay[dayKey] = { day: dayKey, entries: [] };
@@ -532,7 +540,7 @@
                     byDay[dayKey].entries.push(entry);
                 });
                 return groups;
-            }, [dutyRoster]);
+            }, [dutyRoster, dutySearchQuery]);
 
             const groupedHousing = useMemo(() => {
                 if (!Array.isArray(staffHousing)) return [];
@@ -966,6 +974,16 @@
                                     <p className="text-xs text-slate-400 font-medium">Luggage truck, night walks, and free-time supervision assignments for the week.</p>
                                 </div>
 
+                                <div className="relative">
+                                    <Icon name="search" size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" />
+                                    <input type="text" placeholder="Search by name..." className="w-full bg-white/70 backdrop-blur-sm border border-white p-4 pl-12 pr-12 rounded-3xl shadow-sm outline-none font-medium text-sm" value={dutySearchQuery} onChange={e => setDutySearchQuery(e.target.value)} />
+                                    {dutySearchQuery && (
+                                        <button onClick={() => setDutySearchQuery('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300">
+                                            <Icon name="x" size={18} />
+                                        </button>
+                                    )}
+                                </div>
+
                                 {groupedDuty.length > 0 ? groupedDuty.map((group, gi) => (
                                     <div key={gi} className="bg-white/70 backdrop-blur-md rounded-[2rem] border border-white shadow-sm overflow-hidden">
                                         <div className="px-6 py-3 bg-slate-900/90 text-white">
@@ -985,7 +1003,7 @@
                                         </div>
                                     </div>
                                 )) : (
-                                    <p className="text-center py-8 text-slate-400 text-xs font-bold italic">No duty assignments scheduled</p>
+                                    <p className="text-center py-8 text-slate-400 text-xs font-bold italic">{dutySearchQuery ? `No duty assignments found for "${dutySearchQuery}"` : 'No duty assignments scheduled'}</p>
                                 )}
                             </div>
                         )}
