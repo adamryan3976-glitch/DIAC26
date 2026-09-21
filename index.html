@@ -60,7 +60,52 @@
         const APP_LOGO_URL = "https://raw.githubusercontent.com/adamryan3976-glitch/DIAC26/main/diaclogo.png";
         const PAGE_SIZE = 100;
         const GOOGLE_CLIENT_ID = "241712157669-1huukafbcpsifc4v35op6o80qjb10r0r.apps.googleusercontent.com";
-        const TAB_LABELS = { students: 'Artists', attendance: 'attendance', hoc: 'hoc', schedule: 'schedule', massage: 'Massage', duty: 'Duty', map: 'Map', housing: 'Housing' };
+        const TAB_LABELS = { students: 'Artists', attendance: 'attendance', hoc: 'hoc', schedule: 'schedule', massage: 'Massage', duty: 'Duty', map: 'Map', housing: 'Housing', staffFinder: 'Find Staff' };
+
+        function normalizeStaffKey(text) {
+            return String(text || '').replace(/[\s.]/g, '').toLowerCase();
+        }
+
+        function getDayKeyForDate(d) {
+            return d.toLocaleDateString('en-US', { weekday: 'long' }) + ' ' + d.getDate();
+        }
+
+        // Checks whether a duty entry's "who" list refers to this staff member.
+        // Matches on the normalized full name or abbreviation first; falls back to
+        // a first-initial + last-name match so small formatting differences in the
+        // Supervision sheet (extra space, missing period, etc.) don't hide a match.
+        function staffMatchesWho(person, whoList) {
+            const whoNormalized = (whoList || []).map(normalizeStaffKey);
+            const fullKey = normalizeStaffKey(person.name);
+            const abbrevKey = normalizeStaffKey(person.abbrev);
+            if (whoNormalized.includes(fullKey) || whoNormalized.includes(abbrevKey)) return true;
+            const parts = person.name.trim().split(/\s+/);
+            if (parts.length >= 2) {
+                const firstInitial = parts[0][0].toLowerCase();
+                const lastName = normalizeStaffKey(parts.slice(1).join(' '));
+                return whoNormalized.some(w => lastName && w.endsWith(lastName) && w.startsWith(firstInitial));
+            }
+            return false;
+        }
+
+        // Best-effort parse of a duty time range like "4:15 - 5:00" into
+        // minutes-since-midnight. Uses an explicit AM/PM word in the duty's own
+        // label if present (e.g. "PM 1 free time"), otherwise falls back to
+        // assuming 1-6 o'clock means PM (typical for an afternoon/evening camp
+        // duty block) since the sheet's time text alone doesn't carry AM/PM.
+        function parseDutyTimeRange(timeText, dutyText) {
+            const matches = [...String(timeText || '').matchAll(/(\d{1,2}):(\d{2})/g)];
+            if (matches.length < 2) return null;
+            const marker = /\bpm\b/i.test(dutyText) ? 'PM' : (/\bam\b/i.test(dutyText) ? 'AM' : null);
+            const toMinutes = (h, m) => {
+                h = parseInt(h, 10);
+                if (marker === 'PM' && h < 12) h += 12;
+                else if (marker === 'AM' && h === 12) h = 0;
+                else if (!marker && h >= 1 && h <= 6) h += 12;
+                return h * 60 + parseInt(m, 10);
+            };
+            return { start: toMinutes(matches[0][1], matches[0][2]), end: toMinutes(matches[1][1], matches[1][2]) };
+        }
 
         // Camp property map, stored as a Google Drive image. The file must be
         // shared as "Anyone with the link" for these direct-view URLs to load
@@ -142,7 +187,15 @@
             const [massageSchedule, setMassageSchedule] = useState([]);
             const [dutyRoster, setDutyRoster] = useState([]);
             const [staffHousing, setStaffHousing] = useState([]);
-            
+            const [staffRoster, setStaffRoster] = useState([]);
+            const [staffClassSchedule, setStaffClassSchedule] = useState({});
+            const [staffPickerQuery, setStaffPickerQuery] = useState('');
+            const [selectedStaffIndex, setSelectedStaffIndex] = useState(null);
+            const [staffFinderDate, setStaffFinderDate] = useState(() => {
+                const d = new Date();
+                return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+            });
+
             const [loading, setLoading] = useState(true);
             const [selectedStudent, setSelectedStudent] = useState(null);
             const [refreshing, setRefreshing] = useState(false);
@@ -266,7 +319,7 @@
                 setRefreshing(true);
                 setFetchError('');
                 try {
-                    const endpoints = ['students', 'schedule', 'absences', 'classes', 'attStudents', 'massageSchedule', 'duty', 'housing'];
+                    const endpoints = ['students', 'schedule', 'absences', 'classes', 'attStudents', 'massageSchedule', 'duty', 'housing', 'staffFinder'];
                     const results = await Promise.all(
                         endpoints.map(ep =>
                             fetch(`${SCRIPT_URL}?action=${ep}&session=${encodeURIComponent(token)}`)
@@ -306,6 +359,10 @@
                     if (results[5] && !results[5].error) setMassageSchedule(results[5]);
                     if (results[6] && !results[6].error) setDutyRoster(results[6]);
                     if (results[7] && !results[7].error) setStaffHousing(results[7]);
+                    if (results[8] && !results[8].error) {
+                        setStaffRoster(Array.isArray(results[8].roster) ? results[8].roster : []);
+                        setStaffClassSchedule(results[8].classSchedule || {});
+                    }
 
                     if (!failed) {
                         setLastUpdated(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
@@ -557,6 +614,46 @@
                 return groups;
             }, [staffHousing]);
 
+            const filteredStaffRoster = useMemo(() => {
+                const sorted = [...staffRoster].sort((a, b) => a.name.localeCompare(b.name));
+                const query = staffPickerQuery.toLowerCase().trim();
+                if (!query) return sorted;
+                return sorted.filter(p => p.name.toLowerCase().includes(query));
+            }, [staffRoster, staffPickerQuery]);
+
+            const selectedStaffPerson = selectedStaffIndex !== null ? staffRoster[selectedStaffIndex] : null;
+
+            const whereAreTheyNow = useMemo(() => {
+                if (!selectedStaffPerson) return null;
+                const now = new Date();
+                const nowMinutes = now.getHours() * 60 + now.getMinutes();
+                const dayKey = getDayKeyForDate(now);
+
+                const todaysDuty = (Array.isArray(dutyRoster) ? dutyRoster : [])
+                    .filter(e => e.day === dayKey && staffMatchesWho(selectedStaffPerson, e.who));
+                for (const entry of todaysDuty) {
+                    const range = parseDutyTimeRange(entry.time, entry.duty);
+                    if (range && nowMinutes >= range.start && nowMinutes <= range.end) {
+                        return { type: 'duty', label: entry.duty, where: entry.where, time: entry.time };
+                    }
+                }
+
+                const period = getCurrentPeriod(now);
+                const sched = (staffClassSchedule[selectedStaffPerson.abbrev] || {})['S' + period];
+                if (sched) return { type: 'class', label: sched.activity, where: sched.venue, session: period };
+                return { type: 'free', session: period };
+            }, [selectedStaffPerson, dutyRoster, staffClassSchedule]);
+
+            const staffScheduleForDate = useMemo(() => {
+                if (!selectedStaffPerson || !staffFinderDate) return null;
+                const d = new Date(staffFinderDate + 'T00:00:00');
+                const dayKey = getDayKeyForDate(d);
+                const dutyForDay = (Array.isArray(dutyRoster) ? dutyRoster : [])
+                    .filter(e => e.day === dayKey && staffMatchesWho(selectedStaffPerson, e.who));
+                const classSched = staffClassSchedule[selectedStaffPerson.abbrev] || {};
+                return { dayKey, duty: dutyForDay, classes: classSched };
+            }, [selectedStaffPerson, staffFinderDate, dutyRoster, staffClassSchedule]);
+
             const DetailRow = ({ label, value, icon }) => (
                 <div className="flex items-start gap-4 p-4 bg-white/70 backdrop-blur-sm rounded-2xl border border-white shadow-sm">
                     <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl shrink-0"><Icon name={icon} size={18} /></div>
@@ -697,7 +794,7 @@
                             <div className="text-center text-[9px] font-bold text-slate-400 uppercase tracking-widest">Updated {lastUpdated}</div>
                         )}
                         <nav className="grid grid-cols-4 gap-1 bg-white/70 backdrop-blur-md p-1 rounded-2xl shadow-sm border border-white">
-                            {['students', 'attendance', 'hoc', 'schedule', 'massage', 'duty', 'map', 'housing'].map(tab => (
+                            {['students', 'attendance', 'hoc', 'schedule', 'massage', 'duty', 'map', 'housing', 'staffFinder'].map(tab => (
                                 (tab !== 'hoc' || isHoc) &&
                                 <button key={tab} onClick={() => setActiveTab(tab)} className={`py-3 px-1 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === tab ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400'}`}>
                                     {TAB_LABELS[tab] || tab}
@@ -1074,6 +1171,131 @@
                                     </div>
                                 )) : (
                                     <p className="text-center py-8 text-slate-400 text-xs font-bold italic">No housing assignments available</p>
+                                )}
+                            </div>
+                        )}
+
+                        {activeTab === 'staffFinder' && (
+                            <div className="space-y-4 animate-fade-in">
+                                <div className="bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm">
+                                    <h2 className="text-xl font-black text-slate-800 mb-1 whimsical-font italic">Staff Finder</h2>
+                                    <p className="text-xs text-slate-400 font-medium">Pick a staff member to see where they are now and their schedule for any day.</p>
+                                </div>
+
+                                <div className="relative">
+                                    <Icon name="search" size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" />
+                                    <input
+                                        type="text"
+                                        placeholder="Search staff by name..."
+                                        className="w-full bg-white/70 backdrop-blur-sm border border-white p-4 pl-12 pr-12 rounded-3xl shadow-sm outline-none font-medium text-sm"
+                                        value={staffPickerQuery}
+                                        onChange={e => { setStaffPickerQuery(e.target.value); setSelectedStaffIndex(null); }}
+                                    />
+                                    {staffPickerQuery && (
+                                        <button onClick={() => setStaffPickerQuery('')} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300">
+                                            <Icon name="x" size={18} />
+                                        </button>
+                                    )}
+                                </div>
+
+                                {!selectedStaffPerson && (
+                                    <div className="bg-white/70 backdrop-blur-md rounded-[2rem] border border-white shadow-sm overflow-hidden divide-y divide-slate-100 max-h-[420px] overflow-y-auto">
+                                        {filteredStaffRoster.length > 0 ? filteredStaffRoster.map((person) => (
+                                            <button
+                                                key={person.name + person.abbrev}
+                                                onClick={() => setSelectedStaffIndex(staffRoster.indexOf(person))}
+                                                className="w-full text-left px-6 py-3 flex items-center justify-between hover:bg-slate-50/70"
+                                            >
+                                                <span className="text-sm font-bold text-slate-800">{person.name}</span>
+                                                {person.isHoc && <span className="text-[9px] font-black text-indigo-600 uppercase tracking-widest">HOC</span>}
+                                            </button>
+                                        )) : (
+                                            <p className="text-center py-8 text-slate-400 text-xs font-bold italic">No staff found for "{staffPickerQuery}"</p>
+                                        )}
+                                    </div>
+                                )}
+
+                                {selectedStaffPerson && (
+                                    <div className="space-y-4">
+                                        <button onClick={() => setSelectedStaffIndex(null)} className="flex items-center gap-1 text-[10px] font-black text-indigo-600 uppercase tracking-widest">
+                                            <Icon name="chevron-left" size={14} /> Back to staff list
+                                        </button>
+
+                                        <div className="bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm">
+                                            <h3 className="text-lg font-black text-slate-800">{selectedStaffPerson.name}</h3>
+                                            {selectedStaffPerson.isHoc && <span className="text-[9px] font-black text-indigo-600 uppercase tracking-widest">Head of Cabin</span>}
+                                        </div>
+
+                                        <div className="bg-slate-900/90 text-white p-6 rounded-[2rem] shadow-sm">
+                                            <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">Right Now</div>
+                                            {whereAreTheyNow && whereAreTheyNow.type === 'duty' && (
+                                                <>
+                                                    <div className="text-lg font-black">On Duty: {whereAreTheyNow.label}</div>
+                                                    <div className="text-xs text-slate-300 font-medium mt-1">{whereAreTheyNow.where} &middot; {whereAreTheyNow.time}</div>
+                                                </>
+                                            )}
+                                            {whereAreTheyNow && whereAreTheyNow.type === 'class' && (
+                                                <>
+                                                    <div className="text-lg font-black">S{whereAreTheyNow.session}: {whereAreTheyNow.label}</div>
+                                                    {whereAreTheyNow.where && <div className="text-xs text-slate-300 font-medium mt-1">{whereAreTheyNow.where}</div>}
+                                                </>
+                                            )}
+                                            {whereAreTheyNow && whereAreTheyNow.type === 'free' && (
+                                                <div className="text-lg font-black">Nothing scheduled right now (S{whereAreTheyNow.session})</div>
+                                            )}
+                                        </div>
+
+                                        <div className="bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm">
+                                            <div className="flex items-center justify-between mb-4">
+                                                <h3 className="text-sm font-black text-slate-800">Schedule</h3>
+                                                <input
+                                                    type="date"
+                                                    className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 outline-none"
+                                                    value={staffFinderDate}
+                                                    onChange={e => setStaffFinderDate(e.target.value)}
+                                                />
+                                            </div>
+
+                                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-3">Periods (same each day this week)</p>
+                                            <div className="grid grid-cols-2 gap-2 mb-5">
+                                                {['1', '2', '3', '4'].map(s => {
+                                                    const sched = staffScheduleForDate && staffScheduleForDate.classes['S' + s];
+                                                    return (
+                                                        <div key={s} className="bg-slate-50 rounded-2xl p-3 border border-slate-100">
+                                                            <div className="text-[9px] font-black text-indigo-600 uppercase tracking-widest">Session {s}</div>
+                                                            {sched ? (
+                                                                <>
+                                                                    <div className="text-xs font-bold text-slate-800 mt-1">{sched.activity}</div>
+                                                                    {sched.venue && <div className="text-[10px] text-slate-400 font-medium">{sched.venue}</div>}
+                                                                </>
+                                                            ) : (
+                                                                <div className="text-xs text-slate-300 italic mt-1">Free</div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+
+                                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-3">
+                                                Duty — {staffScheduleForDate ? staffScheduleForDate.dayKey : ''}
+                                            </p>
+                                            {staffScheduleForDate && staffScheduleForDate.duty.length > 0 ? (
+                                                <div className="space-y-2">
+                                                    {staffScheduleForDate.duty.map((entry, di) => (
+                                                        <div key={di} className="bg-slate-50 rounded-2xl p-3 border border-slate-100">
+                                                            <div className="flex items-center justify-between">
+                                                                <span className="text-xs font-bold text-slate-800">{entry.duty}</span>
+                                                                <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">{entry.time}</span>
+                                                            </div>
+                                                            <div className="text-[10px] text-slate-400 font-bold uppercase mt-1">{entry.where}</div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <p className="text-xs text-slate-300 italic">No duty scheduled that day</p>
+                                            )}
+                                        </div>
+                                    </div>
                                 )}
                             </div>
                         )}
