@@ -155,12 +155,17 @@
 
         const getDirectDriveUrl = (url) => {
             if (!url) return null;
-            const s = String(url);
+            const s = String(url).trim();
             if (s.includes('drive.google.com')) {
                 let id = "";
-                if (s.includes('id=')) { id = s.split('id=')[1].split('&')[0]; } 
+                if (s.includes('id=')) { id = s.split('id=')[1].split('&')[0]; }
                 else if (s.includes('/file/d/')) { id = s.split('/file/d/')[1].split('/')[0]; }
                 return id ? `https://lh3.googleusercontent.com/d/${id}=s400` : s;
+            }
+            if (!s.includes('http') && !s.includes('/')) {
+                // A bare Drive file ID (e.g. from the Staff Finder photo lookup)
+                // rather than a full URL.
+                return `https://lh3.googleusercontent.com/d/${s}=s400`;
             }
             return s;
         };
@@ -1206,7 +1211,12 @@
                                                 onClick={() => setSelectedStaffIndex(staffRoster.indexOf(person))}
                                                 className="w-full text-left px-6 py-3 flex items-center justify-between hover:bg-slate-50/70"
                                             >
-                                                <span className="text-sm font-bold text-slate-800">{person.name}</span>
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-9 h-9 rounded-full bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden shrink-0">
+                                                        {person.photoId ? <img src={getDirectDriveUrl(person.photoId)} className="w-full h-full object-cover" /> : <Icon name="user" size={16} className="text-slate-200" />}
+                                                    </div>
+                                                    <span className="text-sm font-bold text-slate-800">{person.name}</span>
+                                                </div>
                                                 {person.isHoc && <span className="text-[9px] font-black text-indigo-600 uppercase tracking-widest">HOC</span>}
                                             </button>
                                         )) : (
@@ -1221,9 +1231,14 @@
                                             <Icon name="chevron-left" size={14} /> Back to staff list
                                         </button>
 
-                                        <div className="bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm">
-                                            <h3 className="text-lg font-black text-slate-800">{selectedStaffPerson.name}</h3>
-                                            {selectedStaffPerson.isHoc && <span className="text-[9px] font-black text-indigo-600 uppercase tracking-widest">Head of Camp</span>}
+                                        <div className="bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm flex items-center gap-4">
+                                            <div className="w-16 h-16 rounded-2xl bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden shrink-0">
+                                                {selectedStaffPerson.photoId ? <img src={getDirectDriveUrl(selectedStaffPerson.photoId)} className="w-full h-full object-cover" /> : <Icon name="user" size={28} className="text-slate-200" />}
+                                            </div>
+                                            <div>
+                                                <h3 className="text-lg font-black text-slate-800">{selectedStaffPerson.name}</h3>
+                                                {selectedStaffPerson.isHoc && <span className="text-[9px] font-black text-indigo-600 uppercase tracking-widest">Head of Camp</span>}
+                                            </div>
                                         </div>
 
                                         <div className="bg-slate-900/90 text-white p-6 rounded-[2rem] shadow-sm">
