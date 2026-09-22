@@ -636,15 +636,38 @@
             }, [staffRoster]);
 
             const findStaffByDisplayName = (name) => {
-                const key = normalizeStaffKey(name);
+                // Strip trailing annotations like "(Nurse)" before matching.
+                const cleaned = String(name || '').replace(/\s*\([^)]*\)\s*/g, ' ').trim();
+                const key = normalizeStaffKey(cleaned);
                 if (!key) return null;
                 if (staffByKey[key]) return staffByKey[key];
+
+                // "F. Last" / "FLast" -> match on first-initial + full last name.
                 for (const p of staffRoster) {
                     const parts = p.name.trim().split(/\s+/);
                     if (parts.length < 2) continue;
                     const firstInitial = parts[0][0].toLowerCase();
                     const lastName = normalizeStaffKey(parts.slice(1).join(' '));
                     if (lastName && key.endsWith(lastName) && key.startsWith(firstInitial)) return p;
+                }
+
+                // "First L." -> match on full first name + last-initial, only
+                // when exactly one roster person fits (avoids picking the
+                // wrong person when several share a first name).
+                const rawParts = cleaned.split(/\s+/);
+                if (rawParts.length >= 2) {
+                    const givenFirst = normalizeStaffKey(rawParts[0]);
+                    const givenLastInitial = rawParts[rawParts.length - 1].replace(/[^a-zA-Z]/g, '').toLowerCase();
+                    if (givenFirst && givenLastInitial.length === 1) {
+                        const matches = staffRoster.filter(p => {
+                            const parts = p.name.trim().split(/\s+/);
+                            if (parts.length < 2) return false;
+                            const pFirst = normalizeStaffKey(parts[0]);
+                            const pLastInitial = parts[parts.length - 1][0].toLowerCase();
+                            return pFirst === givenFirst && pLastInitial === givenLastInitial;
+                        });
+                        if (matches.length === 1) return matches[0];
+                    }
                 }
                 return null;
             };
