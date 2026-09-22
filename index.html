@@ -619,6 +619,48 @@
                 return groups;
             }, [staffHousing]);
 
+            // Looks up a roster person (and their photo) from a plain display
+            // name string as it appears in Duty/Housing (e.g. "Andy Barber" or
+            // "A. Barber") — matches on normalized full name or abbreviation
+            // first, then falls back to a first-initial + last-name match, the
+            // same tolerant approach used elsewhere for cross-tab name matching.
+            const staffByKey = useMemo(() => {
+                const map = {};
+                staffRoster.forEach(p => {
+                    const fullKey = normalizeStaffKey(p.name);
+                    const abbrevKey = normalizeStaffKey(p.abbrev);
+                    if (fullKey) map[fullKey] = p;
+                    if (abbrevKey) map[abbrevKey] = p;
+                });
+                return map;
+            }, [staffRoster]);
+
+            const findStaffByDisplayName = (name) => {
+                const key = normalizeStaffKey(name);
+                if (!key) return null;
+                if (staffByKey[key]) return staffByKey[key];
+                for (const p of staffRoster) {
+                    const parts = p.name.trim().split(/\s+/);
+                    if (parts.length < 2) continue;
+                    const firstInitial = parts[0][0].toLowerCase();
+                    const lastName = normalizeStaffKey(parts.slice(1).join(' '));
+                    if (lastName && key.endsWith(lastName) && key.startsWith(firstInitial)) return p;
+                }
+                return null;
+            };
+
+            const StaffAvatar = ({ name, size }) => {
+                const person = findStaffByDisplayName(name);
+                const dim = size || 28;
+                return (
+                    <div className="rounded-full bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden shrink-0" style={{ width: dim, height: dim }}>
+                        {person && person.photoId
+                            ? <img src={getDirectDriveUrl(person.photoId)} className="w-full h-full object-cover" />
+                            : <Icon name="user" size={Math.round(dim * 0.5)} className="text-slate-200" />}
+                    </div>
+                );
+            };
+
             const filteredStaffRoster = useMemo(() => {
                 const sorted = [...staffRoster].sort((a, b) => a.name.localeCompare(b.name));
                 const query = staffPickerQuery.toLowerCase().trim();
@@ -1099,7 +1141,14 @@
                                                         <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">{entry.time}</span>
                                                     </div>
                                                     <div className="text-[9px] text-slate-400 font-bold uppercase mt-1">{entry.where}</div>
-                                                    <div className="text-xs text-slate-600 font-medium mt-1">{Array.isArray(entry.who) ? entry.who.join(', ') : entry.who}</div>
+                                                    <div className="flex flex-wrap gap-3 mt-2">
+                                                        {(Array.isArray(entry.who) ? entry.who : [entry.who]).filter(Boolean).map((name, ni) => (
+                                                            <div key={ni} className="flex items-center gap-1.5">
+                                                                <StaffAvatar name={name} size={22} />
+                                                                <span className="text-xs text-slate-600 font-medium">{name}</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
                                                 </div>
                                             ))}
                                         </div>
@@ -1166,7 +1215,16 @@
                                                         <tr key={ri} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50">
                                                             <td className="p-3 text-xs font-bold text-indigo-600 align-top whitespace-nowrap">{r.room}</td>
                                                             <td className="p-3 text-xs text-slate-700 font-medium">
-                                                                {r.staff.length > 0 ? r.staff.join(', ') : <span className="text-slate-300 italic">Unassigned</span>}
+                                                                {r.staff.length > 0 ? (
+                                                                    <div className="flex flex-wrap gap-3">
+                                                                        {r.staff.map((name, ni) => (
+                                                                            <div key={ni} className="flex items-center gap-1.5">
+                                                                                <StaffAvatar name={name} size={22} />
+                                                                                <span>{name}</span>
+                                                                            </div>
+                                                                        ))}
+                                                                    </div>
+                                                                ) : <span className="text-slate-300 italic">Unassigned</span>}
                                                             </td>
                                                         </tr>
                                                     ))}
