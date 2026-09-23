@@ -622,6 +622,27 @@
                 return groups;
             }, [staffHousing]);
 
+            // Looks up a student (for the Cabins tab's "tap a name to open
+            // their profile" feature) from the plain name string as it
+            // appears in the "All Cabins" sheet — matches on normalized
+            // preferred name or "First Last" legal name.
+            const studentsByKey = useMemo(() => {
+                const map = {};
+                students.forEach(s => {
+                    const preferredKey = normalizeStaffKey(s.preferredName);
+                    const legalKey = normalizeStaffKey(`${s.firstName || ''} ${s.lastName || ''}`);
+                    if (preferredKey && !map[preferredKey]) map[preferredKey] = s;
+                    if (legalKey && !map[legalKey]) map[legalKey] = s;
+                });
+                return map;
+            }, [students]);
+
+            const findStudentByName = (name) => {
+                const key = normalizeStaffKey(name);
+                if (!key) return null;
+                return studentsByKey[key] || null;
+            };
+
             // Looks up a roster person (and their photo) from a plain display
             // name string as it appears in Duty/Housing (e.g. "Andy Barber" or
             // "A. Barber") — matches on normalized full name or abbreviation
@@ -1294,9 +1315,21 @@
                                                         <div className="px-6 pb-4 animate-fade-in">
                                                             {cabin.students.length > 0 ? (
                                                                 <div className="flex flex-wrap gap-2">
-                                                                    {cabin.students.map((name, ni) => (
-                                                                        <span key={ni} className="text-xs font-bold text-slate-700 bg-slate-50 border border-slate-100 rounded-full px-3 py-1.5">{name}</span>
-                                                                    ))}
+                                                                    {cabin.students.map((name, ni) => {
+                                                                        const student = findStudentByName(name);
+                                                                        return student ? (
+                                                                            <button
+                                                                                key={ni}
+                                                                                onClick={() => setSelectedStudent(student)}
+                                                                                className="text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-full px-3 py-1.5 flex items-center gap-1 hover:bg-indigo-100"
+                                                                            >
+                                                                                {name}
+                                                                                <Icon name="chevron-right" size={12} />
+                                                                            </button>
+                                                                        ) : (
+                                                                            <span key={ni} className="text-xs font-bold text-slate-700 bg-slate-50 border border-slate-100 rounded-full px-3 py-1.5">{name}</span>
+                                                                        );
+                                                                    })}
                                                                 </div>
                                                             ) : (
                                                                 <p className="text-xs text-slate-300 italic font-medium">No students listed for this cabin.</p>
