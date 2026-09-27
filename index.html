@@ -59,7 +59,7 @@
       the Home Screen icon.
     -->
     <script>
-      var APP_VERSION = "2026-09-27T18:06:22Z";
+      var APP_VERSION = "2026-09-27T19:39:40Z";
 
       function checkForUpdate() {
         fetch('version.json', { cache: 'no-store' })
@@ -1224,14 +1224,14 @@
                                     <p className="text-xs text-slate-400 font-medium">On-site massage therapist schedule for the week.</p>
                                 </div>
 
-                                {groupedMassage.length > 0 ? groupedMassage.map((group, gi) => (
-                                    <div key={gi} className="bg-white/70 backdrop-blur-md rounded-[2rem] border border-white shadow-sm overflow-hidden">
+                                {groupedMassage.length > 0 ? groupedMassage.map((group) => (
+                                    <div key={group.day} className="bg-white/70 backdrop-blur-md rounded-[2rem] border border-white shadow-sm overflow-hidden">
                                         <div className="px-6 py-3 bg-slate-900/90 text-white">
                                             <h3 className="text-xs font-black uppercase tracking-widest">{group.day}</h3>
                                         </div>
                                         <div className="divide-y divide-slate-100">
                                             {group.entries.map((entry, ei) => (
-                                                <div key={ei} className="flex items-center justify-between px-6 py-3">
+                                                <div key={group.day + '|' + entry.time + '|' + ei} className="flex items-center justify-between px-6 py-3">
                                                     <span className="text-sm font-bold text-slate-800">{entry.name || 'Open slot'}</span>
                                                     <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">{entry.time}</span>
                                                 </div>
@@ -1261,14 +1261,14 @@
                                     )}
                                 </div>
 
-                                {groupedDuty.length > 0 ? groupedDuty.map((group, gi) => (
-                                    <div key={gi} className="bg-white/70 backdrop-blur-md rounded-[2rem] border border-white shadow-sm overflow-hidden">
+                                {groupedDuty.length > 0 ? groupedDuty.map((group) => (
+                                    <div key={group.day} className="bg-white/70 backdrop-blur-md rounded-[2rem] border border-white shadow-sm overflow-hidden">
                                         <div className="px-6 py-3 bg-slate-900/90 text-white">
                                             <h3 className="text-xs font-black uppercase tracking-widest">{group.day}</h3>
                                         </div>
                                         <div className="divide-y divide-slate-100">
                                             {group.entries.map((entry, ei) => (
-                                                <div key={ei} className="px-6 py-3">
+                                                <div key={group.day + '|' + entry.duty + '|' + entry.where + '|' + ei} className="px-6 py-3">
                                                     <div className="flex items-center justify-between">
                                                         <span className="text-sm font-bold text-slate-800">{entry.duty}</span>
                                                         <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">{entry.time}</span>
@@ -1276,7 +1276,7 @@
                                                     <div className="text-[9px] text-slate-400 font-bold uppercase mt-1">{entry.where}</div>
                                                     <div className="flex flex-wrap gap-3 mt-2">
                                                         {(Array.isArray(entry.who) ? entry.who : [entry.who]).filter(Boolean).map((name, ni) => (
-                                                            <div key={ni} className="flex items-center gap-1.5">
+                                                            <div key={name + ni} className="flex items-center gap-1.5">
                                                                 <StaffAvatar name={name} size={22} />
                                                                 <span className="text-xs text-slate-600 font-medium">{name}</span>
                                                             </div>
