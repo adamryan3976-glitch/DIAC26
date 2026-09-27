@@ -60,7 +60,7 @@
         const APP_LOGO_URL = "https://raw.githubusercontent.com/adamryan3976-glitch/DIAC26/main/diaclogo.png";
         const PAGE_SIZE = 100;
         const GOOGLE_CLIENT_ID = "241712157669-1huukafbcpsifc4v35op6o80qjb10r0r.apps.googleusercontent.com";
-        const TAB_LABELS = { students: 'Artists', attendance: 'attendance', hoc: 'hoc', schedule: 'schedule', massage: 'Massage', duty: 'Duty', map: 'Map', housing: 'Housing', staffFinder: 'Find Staff', cabins: 'Cabins', emergency: 'Emergency' };
+        const TAB_LABELS = { students: 'Artists', attendance: 'attendance', hoc: 'hoc', schedule: 'schedule', massage: 'Massage', duty: 'Duty', map: 'Map', housing: 'Housing', staffFinder: 'Find Staff', cabins: 'Cabins', emergency: 'Emergency', venues: 'Venues' };
 
         function normalizeStaffKey(text) {
             return String(text || '').replace(/[\s.]/g, '').toLowerCase();
@@ -203,6 +203,8 @@
             const [cabins, setCabins] = useState([]);
             const [selectedCabinIndex, setSelectedCabinIndex] = useState(null);
             const [emergencyData, setEmergencyData] = useState({ title: '', zones: [], notes: [] });
+            const [venuesData, setVenuesData] = useState({ periodKeys: [], venues: [] });
+            const [venueSearchQuery, setVenueSearchQuery] = useState('');
 
             const [loading, setLoading] = useState(true);
             const [selectedStudent, setSelectedStudent] = useState(null);
@@ -327,7 +329,7 @@
                 setRefreshing(true);
                 setFetchError('');
                 try {
-                    const endpoints = ['students', 'schedule', 'absences', 'classes', 'attStudents', 'massageSchedule', 'duty', 'housing', 'staffFinder', 'cabins', 'emergency'];
+                    const endpoints = ['students', 'schedule', 'absences', 'classes', 'attStudents', 'massageSchedule', 'duty', 'housing', 'staffFinder', 'cabins', 'emergency', 'venues'];
                     const results = await Promise.all(
                         endpoints.map(ep =>
                             fetch(`${SCRIPT_URL}?action=${ep}&session=${encodeURIComponent(token)}`)
@@ -373,6 +375,7 @@
                     }
                     if (results[9] && !results[9].error) setCabins(results[9]);
                     if (results[10] && !results[10].error) setEmergencyData(results[10]);
+                    if (results[11] && !results[11].error) setVenuesData(results[11]);
 
                     if (!failed) {
                         setLastUpdated(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
@@ -536,12 +539,24 @@
 
             const filteredStudents = useMemo(() => {
                 const query = searchQuery.toLowerCase().trim();
-                return sortedArtists.filter(s => 
-                    String(s.preferredName || "").toLowerCase().includes(query) || 
-                    String(s.firstName || "").toLowerCase().includes(query) || 
+                return sortedArtists.filter(s =>
+                    String(s.preferredName || "").toLowerCase().includes(query) ||
+                    String(s.firstName || "").toLowerCase().includes(query) ||
                     String(s.lastName || "").toLowerCase().includes(query)
                 );
             }, [sortedArtists, searchQuery]);
+
+            // Matches on the venue name itself or on anything scheduled there
+            // in any period, so searching "Acrylic" surfaces every venue
+            // running that class this week, not just venues named that.
+            const filteredVenues = useMemo(() => {
+                const query = venueSearchQuery.toLowerCase().trim();
+                if (!query) return venuesData.venues;
+                return venuesData.venues.filter(v =>
+                    v.venue.toLowerCase().includes(query) ||
+                    venuesData.periodKeys.some(pk => String(v.periods[pk] || '').toLowerCase().includes(query))
+                );
+            }, [venuesData, venueSearchQuery]);
 
             const totalPages = Math.max(1, Math.ceil(filteredStudents.length / PAGE_SIZE));
             const pagedStudents = useMemo(() => {
@@ -890,7 +905,7 @@
                             <div className="text-center text-[9px] font-bold text-slate-400 uppercase tracking-widest">Updated {lastUpdated}</div>
                         )}
                         <nav className="grid grid-cols-4 gap-1 bg-white/70 backdrop-blur-md p-1 rounded-2xl shadow-sm border border-white">
-                            {['students', 'attendance', 'hoc', 'schedule', 'massage', 'duty', 'map', 'housing', 'staffFinder', 'cabins', 'emergency'].map(tab => (
+                            {['students', 'attendance', 'hoc', 'schedule', 'massage', 'duty', 'map', 'housing', 'staffFinder', 'cabins', 'emergency', 'venues'].map(tab => (
                                 (tab !== 'hoc' || isHoc) &&
                                 <button key={tab} onClick={() => setActiveTab(tab)} className={`py-3 px-1 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === tab ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400'}`}>
                                     {TAB_LABELS[tab] || tab}
@@ -1403,6 +1418,55 @@
 
                                 {emergencyData.zones.length === 0 && emergencyData.notes.length === 0 && (
                                     <p className="text-center py-8 text-slate-400 text-xs font-bold italic">No emergency procedures available</p>
+                                )}
+                            </div>
+                        )}
+
+                        {activeTab === 'venues' && (
+                            <div className="space-y-4 animate-fade-in">
+                                <div className="bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm">
+                                    <h2 className="text-xl font-black text-slate-800 mb-1 whimsical-font italic">Venues</h2>
+                                    <p className="text-xs text-slate-400 font-medium">What's running where, period by period.</p>
+                                </div>
+
+                                <div className="relative">
+                                    <Icon name="search" size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" />
+                                    <input type="text" placeholder="Search venue or activity..." className="w-full bg-white/70 backdrop-blur-sm border border-white p-4 pl-12 rounded-3xl shadow-sm outline-none font-medium text-sm" value={venueSearchQuery} onChange={e => setVenueSearchQuery(e.target.value)} />
+                                </div>
+
+                                {filteredVenues.length > 0 ? (
+                                    <div className="bg-white/70 backdrop-blur-md rounded-[2rem] border border-white shadow-sm overflow-hidden">
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-left min-w-[520px]">
+                                                <thead>
+                                                    <tr className="bg-slate-900/90 text-white">
+                                                        <th className="p-3 text-[10px] font-black uppercase tracking-widest">Venue</th>
+                                                        {venuesData.periodKeys.map(pk => (
+                                                            <th key={pk} className="p-3 text-[10px] font-black uppercase tracking-widest">{pk}</th>
+                                                        ))}
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {filteredVenues.map((v, vi) => (
+                                                        <tr key={vi} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50">
+                                                            <td className="p-3 text-xs font-black text-indigo-600 align-top whitespace-nowrap">{v.venue}</td>
+                                                            {venuesData.periodKeys.map(pk => {
+                                                                const val = v.periods[pk];
+                                                                const isEmpty = !val || val.toUpperCase() === 'N/A';
+                                                                return (
+                                                                    <td key={pk} className={`p-3 text-xs align-top ${isEmpty ? 'text-slate-300 italic' : 'text-slate-700 font-medium'}`}>
+                                                                        {isEmpty ? 'N/A' : val}
+                                                                    </td>
+                                                                );
+                                                            })}
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <p className="text-center py-8 text-slate-400 text-xs font-bold italic">No venues found</p>
                                 )}
                             </div>
                         )}
