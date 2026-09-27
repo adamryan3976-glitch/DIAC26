@@ -7,9 +7,26 @@
     
     <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/adamryan3976-glitch/DIAC26/main/diaclogo.png">
     <link rel="apple-touch-icon" href="https://raw.githubusercontent.com/adamryan3976-glitch/DIAC26/main/diaclogo.png">
-    
+    <link rel="manifest" href="manifest.json">
+
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#0f172a">
+
+    <!--
+      Registers a minimal service worker purely so iOS treats this as a real
+      "installed" Home Screen app rather than a bare bookmark — that's what
+      protects its sign-in session from Safari's aggressive local-storage
+      clearing when staff close the app. See sw.js for details; it doesn't
+      cache anything or affect how the app works.
+    -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('sw.js').catch(() => {});
+        });
+      }
+    </script>
 
     <script src="https://cdn.tailwindcss.com"></script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
