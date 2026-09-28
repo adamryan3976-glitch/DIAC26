@@ -59,7 +59,7 @@
       the Home Screen icon.
     -->
     <script>
-      var APP_VERSION = "2026-09-27T19:39:40Z";
+      var APP_VERSION = "2026-09-28T13:53:45Z";
 
       function checkForUpdate() {
         fetch('version.json', { cache: 'no-store' })
@@ -123,13 +123,13 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
+        const { useState, useEffect, useMemo, useRef } = React;
 
         const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyLa9VEQWwPR_yTU50r09f-X_PHMyOxFV4cOqyuZvLOuu861OiTfwrsp8a6Z6RnYOre/exec";
         const APP_LOGO_URL = "https://raw.githubusercontent.com/adamryan3976-glitch/DIAC26/main/diaclogo.png";
         const PAGE_SIZE = 100;
         const GOOGLE_CLIENT_ID = "241712157669-1huukafbcpsifc4v35op6o80qjb10r0r.apps.googleusercontent.com";
-        const TAB_LABELS = { students: 'Artists', attendance: 'attendance', hoc: 'hoc', schedule: 'schedule', massage: 'Massage', duty: 'Duty', map: 'Map', housing: 'Housing', staffFinder: 'Find Staff', cabins: 'Cabins', emergency: 'Emergency', venues: 'Venues' };
+        const TAB_LABELS = { students: 'Artists', attendance: 'attendance', hoc: 'hoc', schedule: 'schedule', massage: 'Massage', duty: 'Duty', map: 'Map', housing: 'Housing', staffFinder: 'Find Staff', cabins: 'Cabins', emergency: 'Emergency', venues: 'Venues', photos: 'Photos' };
 
         function normalizeStaffKey(text) {
             return String(text || '').replace(/[\s.]/g, '').toLowerCase();
@@ -273,6 +273,18 @@
             const [selectedCabinIndex, setSelectedCabinIndex] = useState(null);
             const [emergencyData, setEmergencyData] = useState({ title: '', zones: [], notes: [] });
             const [venuesData, setVenuesData] = useState({ periodKeys: [], venues: [] });
+
+            // Photos tab — student-work photo capture/upload.
+            const [photoPeriod, setPhotoPeriod] = useState('S1');
+            const [photoClassName, setPhotoClassName] = useState('');
+            const [photoRoster, setPhotoRoster] = useState([]);
+            const [photoRosterLoading, setPhotoRosterLoading] = useState(false);
+            const [photoRosterError, setPhotoRosterError] = useState('');
+            const [photoUploadingKey, setPhotoUploadingKey] = useState(null);
+            const [photoUploadedKeys, setPhotoUploadedKeys] = useState({});
+            const [photoUploadError, setPhotoUploadError] = useState('');
+            const photoFileInputRef = useRef(null);
+            const photoUploadTargetRef = useRef(null);
             const [venueSearchQuery, setVenueSearchQuery] = useState('');
 
             const [loading, setLoading] = useState(true);
@@ -453,6 +465,109 @@
                     setFetchError('Could not refresh data — showing the last version loaded. Check your connection and try again.');
                 }
                 finally { setLoading(false); setRefreshing(false); setHocSyncingId(null); }
+            };
+
+            // Photos tab: loads the roster for whichever period+class is
+            // selected. Separate from the main fetchData batch since it
+            // needs params and only the Photos tab ever calls it.
+            const fetchPhotoRoster = async (period, className) => {
+                if (!className) { setPhotoRoster([]); return; }
+                setPhotoRosterLoading(true);
+                setPhotoRosterError('');
+                try {
+                    const res = await fetch(`${SCRIPT_URL}?action=classRoster&period=${encodeURIComponent(period)}&className=${encodeURIComponent(className)}&session=${encodeURIComponent(sessionToken)}`);
+                    const data = await res.json();
+                    if (!Array.isArray(data)) {
+                        setPhotoRosterError((data && data.error) || 'Could not load that class.');
+                        setPhotoRoster([]);
+                        return;
+                    }
+                    setPhotoRoster(data);
+                } catch (e) {
+                    setPhotoRosterError('Could not load that class — check your connection and try again.');
+                    setPhotoRoster([]);
+                } finally {
+                    setPhotoRosterLoading(false);
+                }
+            };
+
+            useEffect(() => {
+                if (activeTab === 'photos' && photoClassName) {
+                    fetchPhotoRoster(photoPeriod, photoClassName);
+                }
+            }, [activeTab, photoPeriod, photoClassName]);
+
+            // Resizes + compresses an image file in the browser before upload,
+            // so a full-resolution phone photo doesn't crawl over camp Wi-Fi.
+            // Caps the longest edge at 1280px and re-encodes as JPEG.
+            const compressImageForUpload = (file) => new Promise((resolve, reject) => {
+                const img = new Image();
+                const reader = new FileReader();
+                reader.onerror = () => reject(new Error('Could not read photo.'));
+                reader.onload = () => {
+                    img.onerror = () => reject(new Error('Could not read photo.'));
+                    img.onload = () => {
+                        const maxEdge = 1280;
+                        let { width, height } = img;
+                        if (width > maxEdge || height > maxEdge) {
+                            if (width >= height) { height = Math.round(height * (maxEdge / width)); width = maxEdge; }
+                            else { width = Math.round(width * (maxEdge / height)); height = maxEdge; }
+                        }
+                        const canvas = document.createElement('canvas');
+                        canvas.width = width;
+                        canvas.height = height;
+                        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+                        const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
+                        resolve(dataUrl.split(',')[1]); // strip the "data:image/jpeg;base64," prefix
+                    };
+                    img.src = reader.result;
+                };
+                reader.readAsDataURL(file);
+            });
+
+            const openPhotoPicker = (student) => {
+                photoUploadTargetRef.current = student;
+                setPhotoUploadError('');
+                if (photoFileInputRef.current) photoFileInputRef.current.click();
+            };
+
+            const handlePhotoFileSelected = async (e) => {
+                const file = e.target.files && e.target.files[0];
+                const student = photoUploadTargetRef.current;
+                e.target.value = ''; // allow re-selecting the same file later
+                if (!file || !student) return;
+
+                setPhotoUploadingKey(student.stuNum);
+                setPhotoUploadError('');
+                try {
+                    const photoBase64 = await compressImageForUpload(file);
+                    const res = await fetch(SCRIPT_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                        body: new URLSearchParams({
+                            action: 'uploadPhoto',
+                            session: sessionToken,
+                            period: photoPeriod,
+                            className: photoClassName,
+                            stuNum: student.stuNum,
+                            firstName: student.firstName,
+                            lastName: student.lastName,
+                            grade: student.grade,
+                            mimeType: 'image/jpeg',
+                            photoBase64: photoBase64
+                        })
+                    });
+                    const data = await res.json();
+                    if (!data || data.success !== true) {
+                        setPhotoUploadError((data && data.error) || 'Could not upload photo. Please try again.');
+                        return;
+                    }
+                    setPhotoUploadedKeys(prev => ({ ...prev, [student.stuNum]: (prev[student.stuNum] || 0) + 1 }));
+                } catch (e) {
+                    setPhotoUploadError('Could not upload photo — check your connection and try again.');
+                } finally {
+                    setPhotoUploadingKey(null);
+                }
             };
 
             // Re-sync the Attendance tab to whichever period is running right
@@ -974,7 +1089,7 @@
                             <div className="text-center text-[9px] font-bold text-slate-400 uppercase tracking-widest">Updated {lastUpdated}</div>
                         )}
                         <nav className="grid grid-cols-4 gap-1 bg-white/70 backdrop-blur-md p-1 rounded-2xl shadow-sm border border-white">
-                            {['students', 'attendance', 'hoc', 'schedule', 'massage', 'duty', 'map', 'housing', 'staffFinder', 'cabins', 'emergency', 'venues'].map(tab => (
+                            {['students', 'attendance', 'hoc', 'schedule', 'massage', 'duty', 'map', 'housing', 'staffFinder', 'cabins', 'emergency', 'venues', 'photos'].map(tab => (
                                 (tab !== 'hoc' || isHoc) &&
                                 <button key={tab} onClick={() => setActiveTab(tab)} className={`py-3 px-1 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === tab ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400'}`}>
                                     {TAB_LABELS[tab] || tab}
@@ -1536,6 +1651,98 @@
                                     </div>
                                 ) : (
                                     <p className="text-center py-8 text-slate-400 text-xs font-bold italic">No venues found</p>
+                                )}
+                            </div>
+                        )}
+
+                        {activeTab === 'photos' && (
+                            <div className="space-y-4 animate-fade-in">
+                                <div className="bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm">
+                                    <h2 className="text-xl font-black text-slate-800 mb-1 whimsical-font italic">Photos</h2>
+                                    <p className="text-xs text-slate-400 font-medium">Pick your class, then tap a student to add a photo of their work. It shows up in that grade's slide deck automatically.</p>
+                                </div>
+
+                                <input
+                                    ref={photoFileInputRef}
+                                    type="file"
+                                    accept="image/*"
+                                    capture="environment"
+                                    className="hidden"
+                                    onChange={handlePhotoFileSelected}
+                                />
+
+                                <div className="grid grid-cols-4 gap-1.5">
+                                    {['S1', 'S2', 'S3', 'S4'].map(p => (
+                                        <button
+                                            key={p}
+                                            onClick={() => { setPhotoPeriod(p); setPhotoClassName(''); setPhotoRoster([]); setPhotoRosterError(''); }}
+                                            className={`py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${photoPeriod === p ? 'bg-indigo-600 text-white shadow-md' : 'bg-white/70 text-slate-400 border border-white'}`}
+                                        >
+                                            {p}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                <select
+                                    className="w-full bg-white/70 backdrop-blur-sm border border-white p-4 rounded-3xl shadow-sm outline-none font-bold text-sm text-slate-700"
+                                    value={photoClassName}
+                                    onChange={e => setPhotoClassName(e.target.value)}
+                                >
+                                    <option value="">Select a class...</option>
+                                    {(classes[photoPeriod] || []).map((c, i) => (
+                                        <option key={i} value={c}>{c}</option>
+                                    ))}
+                                </select>
+
+                                {photoUploadError && (
+                                    <div className="bg-rose-50 border border-rose-200 text-rose-600 text-xs font-bold p-3 rounded-2xl flex items-center gap-2 animate-fade-in">
+                                        <Icon name="alert-triangle" size={16} />
+                                        <span>{photoUploadError}</span>
+                                    </div>
+                                )}
+
+                                {photoRosterLoading && (
+                                    <p className="text-center py-8 text-slate-400 text-xs font-bold italic">Loading class...</p>
+                                )}
+
+                                {!photoRosterLoading && photoRosterError && (
+                                    <p className="text-center py-8 text-rose-400 text-xs font-bold italic">{photoRosterError}</p>
+                                )}
+
+                                {!photoRosterLoading && !photoRosterError && photoClassName && (
+                                    photoRoster.length > 0 ? (
+                                        <div className="bg-white/70 backdrop-blur-md rounded-[2rem] border border-white shadow-sm overflow-hidden divide-y divide-slate-100">
+                                            {photoRoster.map(student => {
+                                                const count = photoUploadedKeys[student.stuNum] || 0;
+                                                const isUploading = photoUploadingKey === student.stuNum;
+                                                return (
+                                                    <button
+                                                        key={student.stuNum}
+                                                        onClick={() => openPhotoPicker(student)}
+                                                        disabled={isUploading}
+                                                        className="w-full text-left px-6 py-3.5 flex items-center justify-between hover:bg-slate-50/70 disabled:opacity-60"
+                                                    >
+                                                        <div>
+                                                            <div className="text-sm font-bold text-slate-800">{student.preferredName}</div>
+                                                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Grade {student.grade}</div>
+                                                        </div>
+                                                        {isUploading ? (
+                                                            <Icon name="loader" size={18} className="text-indigo-400 animate-spin" />
+                                                        ) : count > 0 ? (
+                                                            <div className="flex items-center gap-1.5 text-emerald-500">
+                                                                <Icon name="check-circle" size={18} />
+                                                                {count > 1 && <span className="text-[10px] font-black">{count}</span>}
+                                                            </div>
+                                                        ) : (
+                                                            <Icon name="camera" size={18} className="text-indigo-400" />
+                                                        )}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    ) : (
+                                        <p className="text-center py-8 text-slate-400 text-xs font-bold italic">No students found in this class</p>
+                                    )
                                 )}
                             </div>
                         )}
