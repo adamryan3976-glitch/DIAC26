@@ -59,7 +59,7 @@
       the Home Screen icon.
     -->
     <script>
-      var APP_VERSION = "2026-09-28T13:53:45Z";
+      var APP_VERSION = "2026-09-28T15:17:42Z";
 
       function checkForUpdate() {
         fetch('version.json', { cache: 'no-store' })
@@ -130,6 +130,19 @@
         const PAGE_SIZE = 100;
         const GOOGLE_CLIENT_ID = "241712157669-1huukafbcpsifc4v35op6o80qjb10r0r.apps.googleusercontent.com";
         const TAB_LABELS = { students: 'Artists', attendance: 'attendance', hoc: 'hoc', schedule: 'schedule', massage: 'Massage', duty: 'Duty', map: 'Map', housing: 'Housing', staffFinder: 'Find Staff', cabins: 'Cabins', emergency: 'Emergency', venues: 'Venues', photos: 'Photos' };
+
+        // Only these classes get student-work photos (visual arts only).
+        // This MUST match ART_CLASS_NAMES in Code.gs exactly — the server
+        // enforces the same list, so a mismatch just means a class shows
+        // here but every upload for it gets rejected. Update both lists
+        // together if this ever changes.
+        const ART_CLASS_NAMES = [
+            "Watercolour (minor)", "Screen Printing", "Watercolour", "Acrylic", "Drawing",
+            "Portraiture", "Harvesting and Processing Plant Medicines", "Photography", "Ceramics",
+            "Crochet", "Mixed Media Arts", "Drawing - Gnu", "Drawing - Kiwi",
+            "Comic Illustration & Storyboarding", "Printmaking", "Learning With Nature",
+            "Drawing - Dolphin", "Indigenous Artisan Beadwork and Sewing"
+        ];
 
         function normalizeStaffKey(text) {
             return String(text || '').replace(/[\s.]/g, '').toLowerCase();
@@ -1689,7 +1702,7 @@
                                     onChange={e => setPhotoClassName(e.target.value)}
                                 >
                                     <option value="">Select a class...</option>
-                                    {(classes[photoPeriod] || []).map((c, i) => (
+                                    {(classes[photoPeriod] || []).filter(c => ART_CLASS_NAMES.includes(c)).map((c, i) => (
                                         <option key={i} value={c}>{c}</option>
                                     ))}
                                 </select>
