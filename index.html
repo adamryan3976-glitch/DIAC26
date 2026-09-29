@@ -59,7 +59,7 @@
       the Home Screen icon.
     -->
     <script>
-      var APP_VERSION = "2026-09-29T00:01:02Z";
+      var APP_VERSION = "2026-09-29T15:10:20Z";
 
       function checkForUpdate() {
         fetch('version.json', { cache: 'no-store' })
@@ -1710,11 +1710,14 @@
                                     <p className="text-xs text-slate-400 font-medium">Pick your class, then tap a student to add a photo of their work. It shows up in that grade's slide deck automatically.</p>
                                 </div>
 
+                                {/* No "capture" attribute here on purpose — that attribute forces
+                                    the camera to open directly on most mobile browsers, skipping
+                                    the option to pick an existing photo. Leaving it off gives the
+                                    normal system picker (camera OR photo library). */}
                                 <input
                                     ref={photoFileInputRef}
                                     type="file"
                                     accept="image/*"
-                                    capture="environment"
                                     className="hidden"
                                     onChange={handlePhotoFileSelected}
                                 />
