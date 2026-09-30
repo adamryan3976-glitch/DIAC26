@@ -69,7 +69,7 @@
       the Home Screen icon.
     -->
     <script>
-      var APP_VERSION = "2026-09-30T18:33:16Z";
+      var APP_VERSION = "2026-09-30T18:53:38Z";
 
       function checkForUpdate() {
         fetch('version.json', { cache: 'no-store' })
@@ -310,21 +310,35 @@ function getCurrentPeriod(now) {
   }
   return PERIOD_TIMES[PERIOD_TIMES.length - 1].session;
 }
+// lucide's createIcons() rewrites each "<i data-lucide>" placeholder into a
+// real <svg> directly in the live DOM — outside React's own tracking. That
+// used to be a straight, unwrapped React.createElement("i", ...), which
+// meant REACT was the one "owning" that exact DOM node — so the moment
+// lucide swapped it out from under React (e.g. an icon changing, like the
+// camera icon becoming a checkmark right after a photo upload), React's
+// next cleanup pass tried to remove a node that was no longer there and
+// crashed with a "removeChild" error. Wrapping the placeholder inside a
+// React-owned span via dangerouslySetInnerHTML fixes this: React then only
+// ever tracks the outer span as a single opaque unit and never reaches in
+// to manage the inner <i>/<svg> itself, so lucide is free to replace it
+// without React ever getting confused about what's there.
 const Icon = ({
   name,
   size = 20,
   className = ""
 }) => {
   useEffect(() => {
-    if (window.lucide) window.lucide.createIcons();
+    if (window.lucide && window.lucide.createIcons) window.lucide.createIcons();
   }, [name]);
-  return React.createElement("i", {
-    "data-lucide": name,
+  return React.createElement("span", {
     style: {
+      display: "inline-flex",
       width: size,
       height: size
     },
-    className: className
+    dangerouslySetInnerHTML: {
+      __html: `<i data-lucide="${name}" class="${className}" style="width:${size}px;height:${size}px"></i>`
+    }
   });
 };
 const GoogleIcon = () => React.createElement("svg", {
