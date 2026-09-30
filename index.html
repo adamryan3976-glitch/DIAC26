@@ -59,7 +59,7 @@
       the Home Screen icon.
     -->
     <script>
-      var APP_VERSION = "2026-09-30T14:41:33Z";
+      var APP_VERSION = "2026-09-30T15:04:44Z";
 
       function checkForUpdate() {
         fetch('version.json', { cache: 'no-store' })
@@ -459,34 +459,39 @@
                 setRefreshing(true);
                 setFetchError('');
                 try {
-                    const endpoints = ['students', 'schedule', 'absences', 'classes', 'attStudents', 'massageSchedule', 'duty', 'housing', 'staffFinder', 'cabins', 'emergency', 'venues', 'campFire'];
-                    const results = await Promise.all(
-                        endpoints.map(ep =>
-                            fetch(`${SCRIPT_URL}?action=${ep}&session=${encodeURIComponent(token)}`)
-                                .then(r => r.json())
-                                .catch(() => ({ error: 'network' }))
-                        )
-                    );
+                    // A single combined request (action=all) instead of 13
+                    // separate parallel ones — firing 13 at once per device
+                    // was tripping Google's per-spreadsheet concurrency limit
+                    // ("System busy") once enough staff were on the app at
+                    // the same time.
+                    const results = await fetch(`${SCRIPT_URL}?action=all&session=${encodeURIComponent(token)}`)
+                        .then(r => r.json())
+                        .catch(() => ({ error: 'network' }));
 
-                    if (results.some(r => r && typeof r.error === 'string' && r.error.startsWith('Unauthorized'))) {
+                    if (results && typeof results.error === 'string' && results.error.startsWith('Unauthorized')) {
                         setFetchError('Your session expired. Please sign in again.');
                         logout();
                         return;
                     }
-
-                    const failedEndpoints = endpoints.filter((ep, i) => !results[i] || results[i].error);
-                    const failed = failedEndpoints.length > 0;
-                    if (failed) {
-                        setFetchError(`Could not refresh: ${failedEndpoints.join(', ')}. Showing the last version loaded — check your connection and try again.`);
+                    if (results && typeof results.error === 'string') {
+                        setFetchError('Could not refresh: ' + results.error + '. Showing the last version loaded — check your connection and try again.');
+                        return;
                     }
 
-                    if (results[0] && !results[0].error) setStudents(results[0]);
-                    if (results[1] && !results[1].error) setSchedule(results[1]);
-                    if (results[2] && !results[2].error) {
-                        setAbsences(results[2]);
+                    const keys = ['students', 'schedule', 'absences', 'classes', 'attStudents', 'massageSchedule', 'duty', 'housing', 'staffFinder', 'cabins', 'emergency', 'venues', 'campFire'];
+                    const failedKeys = keys.filter(k => !results[k] || results[k].error);
+                    const failed = failedKeys.length > 0;
+                    if (failed) {
+                        setFetchError(`Could not refresh: ${failedKeys.join(', ')}. Showing the last version loaded — check your connection and try again.`);
+                    }
+
+                    if (results.students && !results.students.error) setStudents(results.students);
+                    if (results.schedule && !results.schedule.error) setSchedule(results.schedule);
+                    if (results.absences && !results.absences.error) {
+                        setAbsences(results.absences);
                         const initialLocal = {};
                         const today = new Date().toDateString();
-                        results[2].forEach(abs => {
+                        results.absences.forEach(abs => {
                             const absDate = new Date(abs.timestamp).toDateString();
                             if (absDate === today) {
                                 initialLocal[`${abs.studentName}-${abs.session}-${abs.activity}`] = abs.status;
@@ -494,19 +499,19 @@
                         });
                         setLocalAttendance(prev => ({...prev, ...initialLocal}));
                     }
-                    if (results[3] && !results[3].error) setClasses(results[3]);
-                    if (results[4] && !results[4].error) setAttStudents(results[4]);
-                    if (results[5] && !results[5].error) setMassageSchedule(results[5]);
-                    if (results[6] && !results[6].error) setDutyRoster(results[6]);
-                    if (results[7] && !results[7].error) setStaffHousing(results[7]);
-                    if (results[8] && !results[8].error) {
-                        setStaffRoster(Array.isArray(results[8].roster) ? results[8].roster : []);
-                        setStaffClassSchedule(results[8].classSchedule || {});
+                    if (results.classes && !results.classes.error) setClasses(results.classes);
+                    if (results.attStudents && !results.attStudents.error) setAttStudents(results.attStudents);
+                    if (results.massageSchedule && !results.massageSchedule.error) setMassageSchedule(results.massageSchedule);
+                    if (results.duty && !results.duty.error) setDutyRoster(results.duty);
+                    if (results.housing && !results.housing.error) setStaffHousing(results.housing);
+                    if (results.staffFinder && !results.staffFinder.error) {
+                        setStaffRoster(Array.isArray(results.staffFinder.roster) ? results.staffFinder.roster : []);
+                        setStaffClassSchedule(results.staffFinder.classSchedule || {});
                     }
-                    if (results[9] && !results[9].error) setCabins(results[9]);
-                    if (results[10] && !results[10].error) setEmergencyData(results[10]);
-                    if (results[11] && !results[11].error) setVenuesData(results[11]);
-                    if (results[12] && !results[12].error) setCampFire(results[12]);
+                    if (results.cabins && !results.cabins.error) setCabins(results.cabins);
+                    if (results.emergency && !results.emergency.error) setEmergencyData(results.emergency);
+                    if (results.venues && !results.venues.error) setVenuesData(results.venues);
+                    if (results.campFire && !results.campFire.error) setCampFire(results.campFire);
 
                     if (!failed) {
                         setLastUpdated(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
