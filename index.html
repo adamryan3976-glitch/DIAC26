@@ -1,1350 +1,2208 @@
-/**
- * DIAC Staff Hub — backend
- *
- * Security model:
- *  - Login verifies the Google OAuth access token two ways against Google's
- *    own endpoints: introspection (confirms it was issued to this exact app
- *    and hasn't expired) and userinfo (fetches the verified email straight
- *    from Google) — never decoded or trusted locally.
- *  - On success the server issues a signed session token (email|role|expiry + HMAC).
- *  - EVERY subsequent call (reads and writes) must present a valid session token.
- *    The token is verified server-side on every request, and email/role are taken
- *    from the verified token — never from client-supplied values.
- *  - HOC-only actions are enforced server-side, re-checked against the roster
- *    (with a short cache) on every call, so removing someone from the staff list
- *    revokes them immediately.
- *  - Access is gated solely by the "App Staff List" sheet (exact email match),
- *    not by email domain — any Google account works for sign-in as long as
- *    that exact address is on the roster, so non-DDSB staff can be added the
- *    same way as anyone else.
- *  - Client-supplied strings that land in sheet cells are validated against
- *    allowlists / known values and defused if they start with a formula trigger
- *    character, to prevent formula injection.
- *
- * One-time setup (see setup checklist sent alongside this file):
- *  1. Script Properties: set SESSION_SECRET to a long random string.
- *  2. Add a "Note" header in column J of "App Attendance Absences".
- *  3. Staff photos are read from the STAFF_PHOTOS_FOLDER_ID Drive folder via
- *     its public "anyone with the link" page (see getStaffPhotoMap) rather
- *     than the Drive API, specifically so no new OAuth permission is needed
- *     — that folder just needs to stay shared "Anyone with the link".
- *  4. Re-deploy as a new version (Deploy > Manage deployments > Edit > New version).
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>DIAC Staff Hub</title>
+    
+    <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/adamryan3976-glitch/DIAC26/main/diaclogo.png">
+    <link rel="apple-touch-icon" href="https://raw.githubusercontent.com/adamryan3976-glitch/DIAC26/main/diaclogo.png">
+    <link rel="manifest" href="manifest.json">
+
+    <!-- preconnect + a real <link> (instead of an @import inside <style>)
+         so the browser can start fetching these fonts in parallel with
+         everything else in <head>, rather than waiting until it parses
+         that far into the inline stylesheet. Saves a full round trip on
+         high-latency connections (3G/LTE), where that matters much more
+         than on wifi. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Gaegu:wght@400;700&display=swap">
+
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#0f172a">
+
+    <!--
+      Tell every browser (and, most importantly, iOS's standalone Home
+      Screen app WebView, which caches far more aggressively than a normal
+      browser tab) not to cache this page at all. This is defense-in-depth
+      alongside the version-check script below — GitHub Pages doesn't allow
+      setting real Cache-Control response headers, so this is the strongest
+      lever available from inside the page itself.
+    -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+
+    <!--
+      Registers a minimal service worker purely so iOS treats this as a real
+      "installed" Home Screen app rather than a bare bookmark — that's what
+      protects its sign-in session from Safari's aggressive local-storage
+      clearing when staff close the app. See sw.js for details; it doesn't
+      cache anything or affect how the app works.
+    -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('sw.js').catch(() => {});
+        });
+      }
+    </script>
+
+    <!--
+      Self-updating check. This is the real fix for stale data on phones
+      (especially iPhone Home Screen icons, which iOS caches far more
+      stubbornly than a normal browser tab and gives no way to manually
+      force-refresh): APP_VERSION below must be updated to match version.json
+      every time this file is redeployed. On load, and every few minutes
+      after that while the app stays open, it fetches version.json with
+      cache disabled at the request level (so this one check always reaches
+      the real server, no matter how aggressively the page itself is
+      cached) and compares it to what's actually running. A mismatch means
+      a newer version has been deployed since this copy loaded, so it
+      forces a real reload — via a cache-busting URL, not a plain reload,
+      so it can't just re-serve the same stale cached page — pulling the
+      current version and its current data automatically. This is what
+      keeps duty/attendance/schedule data from silently going stale on
+      someone's phone for days without them ever deleting and reinstalling
+      the Home Screen icon.
+    -->
+    <script>
+      var APP_VERSION = "2026-09-30T21:12:40Z";
+
+      function checkForUpdate() {
+        fetch('version.json', { cache: 'no-store' })
+          .then(function (r) { return r.json(); })
+          .then(function (data) {
+            if (data && data.version && data.version !== APP_VERSION) {
+              var url = location.pathname + '?v=' + encodeURIComponent(data.version);
+              window.location.replace(url);
+            }
+          })
+          .catch(function () { /* offline or blocked — just keep using what's loaded */ });
+      }
+
+      checkForUpdate();
+      setInterval(checkForUpdate, 3 * 60 * 1000); // re-check every 3 minutes while open
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible') checkForUpdate();
+      });
+    </script>
+
+    <!-- The ?v= here must be bumped alongside APP_VERSION/version.json on
+         every deploy that changes styles.css — otherwise a browser that
+         already cached the old stylesheet could keep using it for a while
+         after a new version of the page loads (the self-update check below
+         only busts the cache for this HTML document, not other files). -->
+    <link rel="stylesheet" href="styles.css?v=2026-09-30T17:25:00Z">
+    <!-- Pinned to an exact version (not just "@18") so this is a stable,
+         unchanging URL — unpkg serves those with a very long, immutable
+         cache lifetime, so after the first load a browser won't even ask
+         the network about it again for a long time. That gets the same
+         "repeat opens are fast" benefit the service worker caching
+         attempt was going for, without any custom caching code (and the
+         risk that came with it) — just relying on ordinary, well-tested
+         browser HTTP caching. -->
+    <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/lucide@1.49.0"></script>
+    
+    <!-- Google Identity Services Library -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    
+    <style>
+        body {
+            font-family: 'Inter', sans-serif; 
+            -webkit-tap-highlight-color: transparent; 
+            background-color: #f8fafc; 
+            margin: 0; 
+            overflow-x: hidden;
+        }
+
+        .whimsical-font { font-family: 'Gaegu', cursive; }
+        .animate-fade-in { animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        
+        .paint-splotch {
+            position: fixed;
+            z-index: -1;
+            filter: blur(60px);
+            opacity: 0.12;
+            pointer-events: none;
+        }
+        .splotch-1 { top: -10%; left: -10%; width: 40vw; height: 40vw; background: #6366f1; border-radius: 40% 60% 70% 30% / 40% 50% 60% 50%; }
+        .splotch-2 { top: 40%; right: -15%; width: 50vw; height: 50vw; background: #ec4899; border-radius: 60% 40% 30% 70% / 50% 60% 40% 50%; }
+    </style>
+</head>
+<body>
+    <div class="paint-splotch splotch-1"></div>
+    <div class="paint-splotch splotch-2"></div>
+
+    <div id="root"></div>
+
+    <script>
+/*
+ * NOTE FOR FUTURE EDITS (2026-09-30): this script used to be raw JSX,
+ * transpiled in the browser on every page load via Babel Standalone. On
+ * weak 3G/LTE that CDN script (1MB+) plus the Tailwind CDN JIT engine plus
+ * re-transpiling this whole file every single load were adding real,
+ * avoidable time to every page open — so both are gone now:
+ *   - This is PRECOMPILED plain JS (React.createElement calls instead of
+ *     JSX tags). It was produced by running Babel (@babel/preset-react,
+ *     runtime: 'classic') once, ahead of time, not in the browser.
+ *   - styles.css is a precompiled static stylesheet (Tailwind CLI against
+ *     this file's own class names), replacing the Tailwind CDN <script>.
+ * Plain JS logic (anything with no JSX/angle-bracket tags) can still be
+ * hand-edited directly below, same as always. For a change that involves
+ * JSX (new UI, a new element), write the JSX in a small scratch file,
+ * compile it the same way, and splice the resulting React.createElement(...)
+ * code in here — don't hand-write React.createElement trees from scratch,
+ * and don't re-add a Babel/JSX <script type="text/babel"> block.
  */
-
-const SS = SpreadsheetApp.getActiveSpreadsheet();
-
-const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000; // 14 days — covers the whole camp without re-signing-in
-const STAFF_CACHE_TTL_SEC = 60;
-const READ_CACHE_TTL_SEC = 45;
+const {
+  useState,
+  useEffect,
+  useMemo,
+  useRef
+} = React;
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyLa9VEQWwPR_yTU50r09f-X_PHMyOxFV4cOqyuZvLOuu861OiTfwrsp8a6Z6RnYOre/exec";
+const APP_LOGO_URL = "https://raw.githubusercontent.com/adamryan3976-glitch/DIAC26/main/diaclogo.png";
+const PAGE_SIZE = 100;
 const GOOGLE_CLIENT_ID = "241712157669-1huukafbcpsifc4v35op6o80qjb10r0r.apps.googleusercontent.com";
-const ALLOWED_STATUSES = ["Present", "Absent - Unknown", "Absent - Excused", "Late", "Resolved", "Not Completed"];
-const STAFF_PHOTOS_FOLDER_ID = "1HB1kME6vcjdJ4jdGofHbRf6RWhoU_aob";
-
-// ============================================================================
-// Entry points
-// ============================================================================
-
-function doGet(e) {
-  return handleRequest(e, 'GET');
-}
-
-function doPost(e) {
-  return handleRequest(e, 'POST');
-}
-
-function handleRequest(e, method) {
-  const action = e.parameter.action;
-  let data;
-
-  try {
-    if (action === 'login') {
-      data = checkLogin(e.parameter.token);
-      return respond(data);
-    }
-
-    // Every other action requires a valid session.
-    const auth = requireSession(e.parameter.session);
-    if (!auth.valid) {
-      return respond({ error: "Unauthorized: " + auth.error }, 401);
-    }
-
-    switch (action) {
-      case 'students':
-        data = withCache('students', () => getStudentData());
-        break;
-      case 'schedule':
-        data = withCache('schedule', () => getSheetData("Daily Schedule"));
-        break;
-      case 'absences':
-        data = withCache('absences', () => getSheetData("App Attendance Absences"));
-        break;
-      case 'classes':
-        data = withCache('classes', () => getClassesData());
-        break;
-      case 'attStudents':
-        data = withCache('attStudents', () => getAttendanceStudents());
-        break;
-      case 'massageSchedule':
-        data = withCache('massageSchedule', () => getMassageSchedule());
-        break;
-      case 'duty':
-        data = withCache('duty', () => getSupervisionRoster());
-        break;
-      case 'housing':
-        data = withCache('housing', () => getStaffCabinList());
-        break;
-      case 'staffFinder':
-        data = withCache('staffFinder', () => getStaffFinderData());
-        break;
-      case 'cabins':
-        data = withCache('cabins', () => getCabinsData());
-        break;
-      case 'emergency':
-        data = withCache('emergency', () => getEmergencyZonesData());
-        break;
-      case 'venues':
-        data = withCache('venues', () => getVenuesData());
-        break;
-      case 'campFire':
-        data = withCache('campFire', () => getCampFireData());
-        break;
-      case 'all': {
-        // Combines every read-only action into ONE request instead of the
-        // 13 separate parallel requests the front end used to fire on every
-        // refresh. Each spreadsheet only allows so many simultaneous
-        // operations, and 13-at-once from every signed-in device was
-        // tripping Google's "System busy" throttling once enough staff were
-        // using the app at the same time. One request per refresh (still
-        // backed by the same short-lived cache below) fixes that.
-        const results = {};
-        const fetchers = [
-          ['students', () => withCache('students', () => getStudentData())],
-          ['schedule', () => withCache('schedule', () => getSheetData("Daily Schedule"))],
-          ['absences', () => withCache('absences', () => getSheetData("App Attendance Absences"))],
-          ['classes', () => withCache('classes', () => getClassesData())],
-          ['attStudents', () => withCache('attStudents', () => getAttendanceStudents())],
-          ['massageSchedule', () => withCache('massageSchedule', () => getMassageSchedule())],
-          ['duty', () => withCache('duty', () => getSupervisionRoster())],
-          ['housing', () => withCache('housing', () => getStaffCabinList())],
-          ['staffFinder', () => withCache('staffFinder', () => getStaffFinderData())],
-          ['cabins', () => withCache('cabins', () => getCabinsData())],
-          ['emergency', () => withCache('emergency', () => getEmergencyZonesData())],
-          ['venues', () => withCache('venues', () => getVenuesData())],
-          ['campFire', () => withCache('campFire', () => getCampFireData())]
-        ];
-        fetchers.forEach(([key, fn]) => {
-          try {
-            results[key] = fn();
-          } catch (err) {
-            // One piece failing (e.g. a transient Sheets hiccup) shouldn't
-            // blank out the rest of the app — just mark that piece as
-            // failed and keep going.
-            results[key] = { error: "Server error: " + err.toString() };
-          }
-        });
-        data = results;
-        break;
-      }
-      case 'classRoster':
-        data = getStudentsForClass(e.parameter.period, e.parameter.className);
-        break;
-      case 'uploadPhoto': {
-        if (method !== 'POST') {
-          data = { success: false, error: "uploadPhoto requires POST." };
-          return respond(data, 405);
-        }
-        data = uploadStudentPhoto({
-          stuNum: e.parameter.stuNum,
-          firstName: e.parameter.firstName,
-          lastName: e.parameter.lastName,
-          grade: e.parameter.grade,
-          period: e.parameter.period,
-          className: e.parameter.className,
-          photoBase64: e.parameter.photoBase64,
-          mimeType: e.parameter.mimeType,
-          teacherEmail: auth.email
-        });
-        break;
-      }
-      case 'updateAbsence':
-        if (!auth.isHoc) {
-          data = { success: false, error: "Forbidden: HOC role required." };
-          return respond(data, 403);
-        }
-        data = updateAbsenceStatus(e.parameter.id, e.parameter.status, e.parameter.note, auth.email);
-        invalidateCache('absences');
-        break;
-      case 'bulkReport': {
-        if (method !== 'POST') {
-          data = { success: false, error: "bulkReport requires POST." };
-          return respond(data, 405);
-        }
-        const rawData = JSON.parse(e.parameter.data);
-        data = bulkReportAbsences(rawData, auth.email);
-        invalidateCache('absences');
-        break;
-      }
-      default:
-        data = { error: "Invalid action" };
-    }
-  } catch (err) {
-    data = { error: "Server error: " + err.toString() };
-  }
-
-  return respond(data);
-}
-
-function respond(data) {
-  // ContentService responses from a web app can't set arbitrary HTTP status
-  // codes when called with mode:'no-cors' or via simple GET/POST from the
-  // front end, so errors are signaled in the JSON body (data.error /
-  // data.success === false) and the front end must check for them.
-  return ContentService.createTextOutput(JSON.stringify(data))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-
-// ============================================================================
-// Authentication: login
-// ============================================================================
-
-/**
- * Validates the Google OAuth access token two ways, both server-side against
- * Google's own endpoints (never a local decode, never trusting the client):
- *   1. Introspection — confirms the token was actually issued to THIS app
- *      (audience match) and hasn't expired.
- *   2. Userinfo — fetches the verified email behind that token straight from
- *      Google, using the token itself as the bearer credential.
- * Then looks up the caller on the staff roster and issues a signed session token.
- */
-function checkLogin(token) {
-  if (!token) {
-    return { success: false, error: "Missing authentication credentials." };
-  }
-
-  try {
-    const introspectResp = UrlFetchApp.fetch(
-      "https://oauth2.googleapis.com/tokeninfo?access_token=" + encodeURIComponent(token),
-      { muteHttpExceptions: true }
-    );
-    if (introspectResp.getResponseCode() !== 200) {
-      return { success: false, error: "Invalid or expired Google session. Please sign in again." };
-    }
-    const introspect = JSON.parse(introspectResp.getContentText());
-    const audience = introspect.aud || introspect.azp;
-    if (audience !== GOOGLE_CLIENT_ID) {
-      return { success: false, error: "Token was not issued for this application." };
-    }
-
-    const userInfoResp = UrlFetchApp.fetch(
-      "https://www.googleapis.com/oauth2/v3/userinfo",
-      { headers: { Authorization: "Bearer " + token }, muteHttpExceptions: true }
-    );
-    if (userInfoResp.getResponseCode() !== 200) {
-      return { success: false, error: "Failed to verify Google identity." };
-    }
-    const payload = JSON.parse(userInfoResp.getContentText());
-
-    if (!payload || !payload.email) {
-      return { success: false, error: "Failed to extract SSO identity." };
-    }
-    if (String(payload.email_verified).toLowerCase() !== 'true') {
-      return { success: false, error: "Email address is not verified with Google." };
-    }
-
-    const emailToCheck = payload.email.trim().toLowerCase();
-
-    // Access is gated solely by the "App Staff List" roster below — not by
-    // email domain. This lets non-DDSB staff (contractors, guest artists,
-    // etc.) sign in with any Google account, as long as their exact email
-    // has been added to that sheet, the same as any other staff member.
-    const staff = lookupStaff(emailToCheck);
-    if (!staff) {
-      return {
-        success: false,
-        error: "Access Denied: Email address '" + emailToCheck + "' is not on the authorized App Staff List."
-      };
-    }
-
-    const session = createSessionToken(emailToCheck, staff.isHoc);
-    return { success: true, email: emailToCheck, isHoc: staff.isHoc, session: session };
-
-  } catch (err) {
-    return { success: false, error: "Google SSO verification failed: " + err.toString() };
-  }
-}
-
-/**
- * Looks up a staff email on "App Staff List" (Column A: email, Column F: isHoc).
- * Cached briefly so a busy login burst doesn't hammer the sheet, but short
- * enough that removing someone from the roster takes effect within a minute.
- */
-function lookupStaff(emailLower) {
-  const cache = CacheService.getScriptCache();
-  const cacheKey = 'staff_' + emailLower;
-  const cached = cache.get(cacheKey);
-  if (cached !== null) {
-    return cached === '__none__' ? null : JSON.parse(cached);
-  }
-
-  const sheet = SS.getSheetByName("App Staff List");
-  if (!sheet) throw new Error("Database authentication node offline.");
-
-  const data = sheet.getDataRange().getValues();
-  let result = null;
-  for (let i = 1; i < data.length; i++) {
-    const rowEmail = String(data[i][0]).toLowerCase().trim();
-    if (rowEmail === emailLower) {
-      result = { isHoc: String(data[i][5]).toUpperCase() === "TRUE" };
-      break;
-    }
-  }
-
-  cache.put(cacheKey, result ? JSON.stringify(result) : '__none__', STAFF_CACHE_TTL_SEC);
-  return result;
-}
-
-// ============================================================================
-// Session tokens (HMAC-signed, server-verified on every call)
-// ============================================================================
-
-function getSessionSecret() {
-  const secret = PropertiesService.getScriptProperties().getProperty('SESSION_SECRET');
-  if (!secret) {
-    throw new Error("SESSION_SECRET is not configured in Script Properties. See setup checklist.");
-  }
-  return secret;
-}
-
-function createSessionToken(email, isHoc) {
-  const expiry = Date.now() + SESSION_TTL_MS;
-  const payload = email + '|' + (isHoc ? '1' : '0') + '|' + expiry;
-  const sig = signPayload(payload);
-  return Utilities.base64EncodeWebSafe(payload) + '.' + sig;
-}
-
-function signPayload(payload) {
-  const secret = getSessionSecret();
-  const rawSig = Utilities.computeHmacSha256Signature(payload, secret);
-  return Utilities.base64EncodeWebSafe(rawSig);
-}
-
-/**
- * Verifies a session token's signature and expiry, then re-checks the
- * caller's HOC status against the live roster (cached briefly) rather than
- * trusting the flag embedded in the token — so a demotion takes effect
- * without waiting for the token to expire.
- */
-function requireSession(token) {
-  if (!token) return { valid: false, error: "No session provided. Please sign in again." };
-
-  let payload;
-  try {
-    payload = Utilities.newBlob(Utilities.base64DecodeWebSafe(token.split('.')[0])).getDataAsString();
-  } catch (e) {
-    return { valid: false, error: "Malformed session." };
-  }
-
-  const parts = token.split('.');
-  if (parts.length !== 2) return { valid: false, error: "Malformed session." };
-  const sig = parts[1];
-
-  const expectedSig = signPayload(payload);
-  if (sig !== expectedSig) {
-    return { valid: false, error: "Invalid session signature." };
-  }
-
-  const fields = payload.split('|');
-  if (fields.length !== 3) return { valid: false, error: "Malformed session." };
-  const email = fields[0];
-  const expiry = Number(fields[2]);
-
-  if (!expiry || Date.now() > expiry) {
-    return { valid: false, error: "Session expired. Please sign in again." };
-  }
-
-  const staff = lookupStaff(email);
-  if (!staff) {
-    return { valid: false, error: "You are no longer on the authorized staff list." };
-  }
-
-  return { valid: true, email: email, isHoc: staff.isHoc };
-}
-
-// ============================================================================
-// Read-side caching (short TTL; invalidated on writes)
-// ============================================================================
-
-function withCache(key, fn) {
-  const cache = CacheService.getScriptCache();
-  const cached = cache.get('data_' + key);
-  if (cached !== null) return JSON.parse(cached);
-
-  const result = fn();
-  try {
-    cache.put('data_' + key, JSON.stringify(result), READ_CACHE_TTL_SEC);
-  } catch (e) {
-    // Result too large to cache — fine, just skip caching it.
-  }
-  return result;
-}
-
-function invalidateCache(key) {
-  CacheService.getScriptCache().remove('data_' + key);
-}
-
-// ============================================================================
-// Input validation / formula-injection defense
-// ============================================================================
-
-function sanitizeCell(value) {
-  if (typeof value !== 'string') return value;
-  if (/^[=+\-@]/.test(value)) {
-    return "'" + value; // neutralize as text, matches common spreadsheet defense
-  }
-  return value;
-}
-
-function validateStatus(status) {
-  return ALLOWED_STATUSES.includes(status) ? status : null;
-}
-
-// ============================================================================
-// Data access
-// ============================================================================
-
-function getStudentData() {
-  const sheet = SS.getSheetByName("Student App Data");
-  const data = sheet.getDataRange().getValues();
-
-  return data.slice(1).map(row => ({
-    firstName: row[0],
-    lastName: row[1],
-    birthDate: formatDate(row[3]),
-    pronouns: row[5],
-    cabin: row[6],
-    guardianFirstName: row[7],
-    guardianLastName: row[8],
-    guardianPhone: row[9],
-    guardianEmail: row[10],
-    preferredEmail: row[11],
-    grade: row[12],
-    school: row[13],
-    photo: row[14],
-    dietary: row[15],
-    allergies: row[16],
-    s1Activity: row[17],
-    s1Venue: row[18],
-    s2Activity: row[19],
-    s2Venue: row[20],
-    s3Activity: row[21],
-    s3Venue: row[22],
-    s4Activity: row[23],
-    s4Venue: row[24],
-    preferredName: row[27] || (row[0] + " " + row[1]),
-    stuNum: String(row[0] + row[1])
-  }));
-}
-
-function getClassesData() {
-  const sheet = SS.getSheetByName("App Classes");
-  const data = sheet.getDataRange().getValues();
-  const result = { S1: [], S2: [], S3: [], S4: [] };
-
-  for (let col = 0; col < 4; col++) {
-    for (let row = 1; row < data.length; row++) {
-      if (data[row][col]) result[`S${col + 1}`].push(data[row][col]);
-    }
-  }
-  return result;
-}
-
-// ============================================================================
-// Student work photos: teacher upload -> Drive + log -> Slide decks
-// (the deck-building/refresh side of this lives in SlideDeckBuilder.gs)
-// ============================================================================
-
-const PHOTO_LOG_SHEET_NAME = "Photo Uploads";
-const PHOTO_FOLDER_PROP_KEY = "PHOTO_UPLOADS_FOLDER_ID";
-const VALID_PERIODS = ["S1", "S2", "S3", "S4"];
-
-/**
- * Only these classes get student-work photos / slide panels — visual
- * arts only, per camp policy. Used both here (to gate uploads server-
- * side) and in SlideDeckBuilder.gs (to decide which panels a student's
- * slide gets). Must match the Activity column text in "Student App Data"
- * EXACTLY (case and spacing), since matching is a plain string compare.
- *
- * IMPORTANT: index.html also has its own copy of this same list (it's a
- * different runtime, so it can't share this constant directly) used to
- * filter the Photos tab's class dropdown. Keep both lists in sync if this
- * ever changes — search index.html for "ART_CLASS_NAMES".
- */
-const ART_CLASS_NAMES = [
-  "Watercolour (minor)",
-  "Screen Printing",
-  "Watercolour",
-  "Acrylic",
-  "Drawing",
-  "Portraiture",
-  "Harvesting and Processing Plant Medicines",
-  "Photography",
-  "Ceramics",
-  "Crochet",
-  "Mixed Media Arts",
-  "Drawing - Gnu",
-  "Drawing - Kiwi",
-  "Comic Illustration & Storyboarding",
-  "Printmaking",
-  "Learning With Nature",
-  "Drawing - Dolphin",
-  "Indigenous Artisan Beadwork and Sewing"
-];
-
-/**
- * Returns the roster of students in a given period (S1-S4) + class name,
- * matched against that period's Activity column in "Student App Data"
- * (s1Activity..s4Activity — same columns getStudentData() reads). Only
- * classes in ART_CLASS_NAMES are allowed, since only visual arts classes
- * get student-work photos.
- */
-function getStudentsForClass(period, className) {
-  if (!VALID_PERIODS.includes(period)) return { error: "Invalid period." };
-  if (!className) return { error: "Missing className." };
-  if (!ART_CLASS_NAMES.includes(className)) return { error: "Photos are only collected for visual arts classes." };
-
-  const activityCol = { S1: 17, S2: 19, S3: 21, S4: 23 }[period];
-  const sheet = SS.getSheetByName("Student App Data");
-  const data = sheet.getDataRange().getValues();
-  const photoCounts = getPhotoCountsForClass(period, className);
-
-  return data.slice(1)
-    .filter(row => String(row[activityCol] || '').trim() === className)
-    .map(row => {
-      const stuNum = String(row[0] + row[1]);
-      return {
-        stuNum,
-        firstName: row[0],
-        lastName: row[1],
-        preferredName: row[27] || (row[0] + " " + row[1]),
-        grade: row[12],
-        photoCount: photoCounts[stuNum] || 0
-      };
-    });
-}
-
-/**
- * Counts how many photos have already been logged for each student in a
- * given period+class, by reading the "Photo Uploads" log. This is what
- * lets the Photos tab show a teacher which students they've already
- * covered (and how many shots each has) even across sessions, devices,
- * and days — since it's sourced from the log itself, not from anything
- * remembered in the browser.
- *
- * Deliberately piggybacks on the existing classRoster request instead of
- * adding a separate one, so switching classes still costs a single
- * round-trip, same as before this feature existed.
- *
- * Counts every logged photo for that student in that period+class,
- * including any row SlideDeckBuilder.gs marked OVERFLOW (the panel
- * already had PHOTOS_PER_PANEL_MAX photos when it was processed) — a
- * teacher did upload it, so it should still count toward "how many have
- * I added," even though it didn't end up on the slide.
- */
-function getPhotoCountsForClass(period, className) {
-  const sheet = SS.getSheetByName(PHOTO_LOG_SHEET_NAME);
-  if (!sheet) return {};
-  const data = sheet.getDataRange().getValues();
-  const counts = {};
-  for (let i = 1; i < data.length; i++) {
-    const row = data[i];
-    if (row[5] !== period) continue;
-    if (String(row[6] || '').trim() !== className) continue;
-    const stu = String(row[3] || '');
-    if (!stu) continue;
-    counts[stu] = (counts[stu] || 0) + 1;
-  }
-  return counts;
-}
-
-/**
- * Saves an uploaded student-work photo: writes the image to Drive (a
- * dedicated folder, created once and remembered in Script Properties so no
- * manual folder ID needs to be configured), then appends one row to the
- * "Photo Uploads" log sheet. The log is the queue SlideDeckBuilder.gs's
- * time-driven trigger reads from — this function never touches Slides
- * directly, so an upload finishes fast even while the deck is being built.
- */
-function uploadStudentPhoto(opts) {
-  const { stuNum, firstName, lastName, grade, period, className, photoBase64, mimeType, teacherEmail } = opts;
-
-  if (!VALID_PERIODS.includes(period)) return { success: false, error: "Invalid period." };
-  if (!className) return { success: false, error: "Missing class name." };
-  if (!ART_CLASS_NAMES.includes(className)) return { success: false, error: "Photos are only collected for visual arts classes." };
-  if (!stuNum) return { success: false, error: "Missing student." };
-  if (!photoBase64) return { success: false, error: "No photo data received." };
-
-  const allowedMime = ["image/jpeg", "image/png", "image/webp"];
-  const safeMime = allowedMime.includes(mimeType) ? mimeType : "image/jpeg";
-
-  let bytes;
-  try {
-    bytes = Utilities.base64Decode(photoBase64);
-  } catch (e) {
-    return { success: false, error: "Photo data was corrupted in transit. Please try again." };
-  }
-
-  // A compressed camp photo should be well under this; guards against a
-  // runaway upload eating Drive space or timing out the request.
-  const MAX_BYTES = 8 * 1024 * 1024; // 8 MB
-  if (bytes.length > MAX_BYTES) {
-    return { success: false, error: "Photo is too large. Please try again — it should compress automatically." };
-  }
-
-  try {
-    const folder = getOrCreatePhotoFolder();
-    const ext = safeMime === "image/png" ? "png" : (safeMime === "image/webp" ? "webp" : "jpg");
-    const fileName = `${sanitizeCell(String(stuNum))}_${period}_${sanitizeCell(String(className))}_${Date.now()}.${ext}`;
-    const blob = Utilities.newBlob(bytes, safeMime, fileName);
-    const file = folder.createFile(blob);
-
-    const logSheet = getOrCreatePhotoLogSheet();
-    logSheet.appendRow([
-      new Date(),
-      sanitizeCell(String(firstName || '')),
-      sanitizeCell(String(lastName || '')),
-      sanitizeCell(String(stuNum)),
-      sanitizeCell(String(grade || '')),
-      period,
-      sanitizeCell(String(className)),
-      teacherEmail,
-      file.getId(),
-      file.getUrl(),
-      '' // Processed — left blank until SlideDeckBuilder.gs's trigger picks it up
-    ]);
-
-    return { success: true };
-  } catch (e) {
-    return { success: false, error: "Could not save photo: " + e.message };
-  }
-}
-
-/**
- * Finds (or, on first use, creates) the Drive folder student-work photos
- * are saved into. The folder ID is remembered in Script Properties after
- * the first run, so this is entirely self-configuring — no folder ID
- * needs to be pasted into the code.
- */
-function getOrCreatePhotoFolder() {
-  const props = PropertiesService.getScriptProperties();
-  const existingId = props.getProperty(PHOTO_FOLDER_PROP_KEY);
-  if (existingId) {
-    try {
-      return DriveApp.getFolderById(existingId);
-    } catch (e) {
-      // Folder was deleted/moved out of reach — fall through and make a new one.
-    }
-  }
-  const folder = DriveApp.createFolder("DIAC 2026 Student Work Photos");
-  props.setProperty(PHOTO_FOLDER_PROP_KEY, folder.getId());
-  return folder;
-}
-
-/**
- * Finds (or creates, with headers) the "Photo Uploads" log sheet.
- */
-/**
- * "Slide Deck ID" and "Slide Image ID" (columns L/M) record exactly where
- * a photo landed once inserted — which deck, and which specific image
- * shape on that slide. This is what lets a correction (see
- * fixSelectedPhotoRow in SlideDeckBuilder.gs) find and remove a
- * wrongly-placed photo even after you've already edited the StuNum/
- * Period/Class columns to the right values: those two ID columns don't
- * change when you edit the others, so they still point at the OLD spot.
- */
-function getOrCreatePhotoLogSheet() {
-  let sheet = SS.getSheetByName(PHOTO_LOG_SHEET_NAME);
-  if (!sheet) {
-    sheet = SS.insertSheet(PHOTO_LOG_SHEET_NAME);
-    sheet.appendRow([
-      "Timestamp", "First Name", "Last Name", "StuNum", "Grade",
-      "Period", "Class", "Teacher Email", "Drive File ID", "Drive URL", "Processed",
-      "Slide Deck ID", "Slide Image ID"
-    ]);
-    sheet.getRange(1, 1, 1, 13).setFontWeight('bold');
-  } else if (sheet.getLastColumn() < 13) {
-    // A sheet created before this update won't have the two new columns —
-    // add them now so older logs still work with the fix-up tools.
-    sheet.getRange(1, 12).setValue("Slide Deck ID").setFontWeight('bold');
-    sheet.getRange(1, 13).setValue("Slide Image ID").setFontWeight('bold');
-  }
-  return sheet;
-}
-
-/**
- * Reads the "Massage Appts" tab. Columns are Day / Time / Appt (name) / Email
- * (a 5th "Notes" column shows up on at least one row in the source sheet and
- * is intentionally ignored here). The Day column uses merged cells in the
- * sheet, which Sheets reports as blank for every row after the first in the
- * merge — so the day is carried forward until a new one appears. Only name
- * and time are returned; email addresses are left out of the app response
- * even though the column exists.
- *
- * IMPORTANT: Day/Time are read via getDisplayValues() rather than
- * getValues(), and Time is reformatted with plain string math — deliberately
- * avoiding any Date object / timezone conversion. Sheets stores a time-only
- * cell as a serial number anchored to its internal "zero date" of
- * 1899-12-30, and reading that with getValues() returns a JS Date still
- * carrying that date. Converting THAT to a string via
- * Utilities.formatDate(value, tz, ...) silently shifts the time, because
- * 1899-12-30 predates time zones being formally standardized — for a date
- * that old, the timezone library falls back to historical "Local Mean Time"
- * (based on raw longitude), whose offset differs from today's standard
- * offset by a non-round number of minutes. getDisplayValues() sidesteps all
- * of this: it returns exactly the text Sheets already shows on screen
- * (e.g. "13:00"), computed straight from the serial number with no
- * timezone conversion at all, so there's nothing left to drift.
- */
-function getMassageSchedule() {
-  const sheet = SS.getSheetByName("Massage Appts");
-  if (!sheet) return [];
-
-  const range = sheet.getDataRange();
-  const raw = range.getValues();
-  const display = range.getDisplayValues();
-  let currentDay = '';
-  const result = [];
-
-  for (let i = 1; i < display.length; i++) { // skip header row
-    const dayCell = String(display[i][0] || '').trim();
-    const timeCell = formatTimeDisplay(display[i][1]);
-    const nameCell = String(raw[i][2] || '').trim();
-
-    if (dayCell) currentDay = dayCell;
-    if (!timeCell && !nameCell) continue; // skip blank/separator rows
-
-    result.push({
-      day: currentDay,
-      time: timeCell,
-      name: nameCell
-    });
-  }
-  return result;
-}
-
-/**
- * Converts a sheet-displayed 24-hour time string like "13:00" or "9:00"
- * into a friendly 12-hour "1:00 PM" / "9:00 AM" label using plain string
- * math only — no Date object, no timezone (see getMassageSchedule's comment
- * for why that matters). Anything that doesn't look like "H:MM" is passed
- * through unchanged rather than dropped, so an unusual cell still shows up.
- */
-function formatTimeDisplay(text) {
-  const str = String(text || '').trim();
-  if (!str) return '';
-  const match = str.match(/^(\d{1,2}):(\d{2})/);
-  if (!match) return str;
-  const hour = parseInt(match[1], 10);
-  const minute = match[2];
-  const ampm = hour >= 12 ? 'PM' : 'AM';
-  let hour12 = hour % 12;
-  if (hour12 === 0) hour12 = 12;
-  return hour12 + ':' + minute + ' ' + ampm;
-}
-
-/**
- * Reads the "Supervision" tab: staff duty roster for luggage truck runs,
- * night walks, and free-time supervision. Columns are When / Where / Who 1 /
- * Who 2 / Who 3 / Who 4. Like Massage Appts, the "When" column uses merged
- * cells (one merged cell covers every location row for a given day+duty
- * block), which Sheets reports as blank for every row after the first in
- * the merge — so it's carried forward the same way. "When" packs the day,
- * duty name, and time window into one string (e.g. "27 Sunday PM 1 free
- * time (4:15 - 5:00)"), which is split apart for display.
- */
-function getSupervisionRoster() {
-  const sheet = SS.getSheetByName("Supervision");
-  if (!sheet) return [];
-
-  const data = sheet.getDataRange().getValues();
-  let currentWhen = '';
-  const result = [];
-
-  for (let i = 1; i < data.length; i++) { // skip header row
-    const row = data[i];
-    const whenCell = String(row[0] || '').trim();
-    const where = String(row[1] || '').trim();
-    const who = [row[2], row[3], row[4], row[5]]
-      .map(v => String(v || '').trim())
-      .filter(v => v.length > 0);
-
-    if (whenCell) currentWhen = whenCell;
-    if (!where && who.length === 0) continue; // skip blank/separator rows
-
-    const parsed = parseSupervisionWhen(currentWhen);
-    result.push({
-      day: parsed.day,
-      duty: parsed.duty,
-      time: parsed.time,
-      where: where,
-      who: who
-    });
-  }
-  return result;
-}
-
-/**
- * Splits a "When" cell like "27 Sunday PM 1 free time (4:15 - 5:00)" into
- * { day: "Sunday 27", duty: "PM 1 free time", time: "4:15 - 5:00" }.
- * Falls back to putting the whole string in "day" if it doesn't match the
- * expected shape, so an unusual row still shows up rather than vanishing.
- */
-function parseSupervisionWhen(whenText) {
-  const text = String(whenText || '').trim();
-  const match = text.match(/^(\d{1,2})\s+(\S+)\s+(.*?)(?:\s*\(([^)]*)\))?\s*$/);
-  if (!match) {
-    return { day: text, duty: '', time: '' };
-  }
-  const dayNum = match[1];
-  const dayName = match[2];
-  const duty = (match[3] || '').trim();
-  const time = (match[4] || '').trim();
-  return { day: dayName + ' ' + dayNum, duty: duty, time: time };
-}
-
-/**
- * Reads the "App Staff Cabin List" tab: staff housing assignments. Columns
- * are Location (cabin name) / Room / up to 4 staff names (columns C-F). Like
- * Massage Appts and Supervision, "Location" uses merged cells (one merged
- * cell spans every room row for a given cabin), which Sheets reports as
- * blank for every row after the first in the merge — so it's carried
- * forward the same way.
- */
-/**
- * Reads the "All Cabins" tab, where row 1 has one cabin name per column and
- * every row below lists the students assigned to that column's cabin (blank
- * cells once a cabin runs out of students). Returns one entry per cabin with
- * its non-blank student names, in the same left-to-right column order as
- * the sheet.
- */
-function getCabinsData() {
-  const sheet = SS.getSheetByName("All Cabins");
-  if (!sheet) return [];
-
-  const data = sheet.getDataRange().getValues();
-  if (data.length === 0) return [];
-
-  const headers = data[0];
-  const cabins = headers.map(h => ({ name: String(h || '').trim(), students: [] }));
-
-  for (let r = 1; r < data.length; r++) {
-    const row = data[r];
-    for (let c = 0; c < cabins.length; c++) {
-      if (!cabins[c].name) continue;
-      const student = String(row[c] || '').trim();
-      if (student) cabins[c].students.push(student);
-    }
-  }
-
-  return cabins.filter(cabin => cabin.name);
-}
-
-/**
- * Reads the "Emergency Zones" tab, which is a hand-formatted reference sheet
- * rather than a plain table: a title row, a zone-assignment table (Area /
- * Location / Staff Member — some rows have no Area label but still list a
- * location + staff, e.g. "Office - siren and communications"), followed by
- * a looser block of emergency-procedure notes (some are section banners
- * with no label, some are "Role: what to do" lines).
- *
- * The zone table and the notes block are distinguished structurally rather
- * than by hardcoded row numbers, so this keeps working if rows are
- * inserted/reordered later: every genuine zone-assignment row has a
- * Staff Member (column C) value; the first row below the header that has
- * no column C value marks the start of the notes block.
- */
-function getEmergencyZonesData() {
-  const sheet = SS.getSheetByName("Emergency Zones");
-  if (!sheet) return { title: '', zones: [], notes: [] };
-
-  const data = sheet.getDataRange().getValues();
-  if (data.length < 2) return { title: '', zones: [], notes: [] };
-
-  const title = String(data[0][0] || data[0][1] || '').trim();
-
-  const zones = [];
-  let i = 2; // row 1 = title, row 2 = column headers (Area / Location / Staff Member)
-  for (; i < data.length; i++) {
-    const area = String(data[i][0] || '').trim();
-    const location = String(data[i][1] || '').trim();
-    const staff = String(data[i][2] || '').trim();
-    if (!area && !location && !staff) continue; // stray blank row — keep scanning
-    if (!staff) break; // no staff assigned -> the zone table has ended
-    zones.push({ area: area, location: location, staff: staff });
-  }
-
-  const notes = [];
-  for (; i < data.length; i++) {
-    const label = String(data[i][0] || '').trim();
-    const text = String(data[i][1] || data[i][2] || '').trim();
-    if (!label && !text) continue; // stray blank row
-    notes.push({ label: label, text: text });
-  }
-
-  return { title: title, zones: zones, notes: notes };
-}
-
-/**
- * Reads the "Venues" tab: row 1 is "Venue" then a period column per session
- * (P1, P2, P3, ...), and every row below is a venue with what's happening
- * there each period ("N/A" where nothing is scheduled). Returns each venue
- * with its periods as a plain { P1: "...", P2: "...", ... } object, using
- * whatever period column headers the sheet actually has, so this keeps
- * working if a period is added or renamed later.
- */
-function getVenuesData() {
-  const sheet = SS.getSheetByName("Venues");
-  if (!sheet) return [];
-
-  const data = sheet.getDataRange().getValues();
-  if (data.length < 2) return [];
-
-  const headers = data[0].map(h => String(h || '').trim());
-  const periodCols = [];
-  for (let c = 1; c < headers.length; c++) {
-    if (headers[c]) periodCols.push({ index: c, key: headers[c] });
-  }
-
-  const venues = [];
-  for (let i = 1; i < data.length; i++) {
-    const row = data[i];
-    const name = String(row[0] || '').trim();
-    if (!name) continue;
-    const periods = {};
-    periodCols.forEach(function (col) {
-      periods[col.key] = String(row[col.index] || '').trim();
-    });
-    venues.push({ venue: name, periods: periods });
-  }
-
-  return { periodKeys: periodCols.map(c => c.key), venues: venues };
-}
-
-/**
- * Reads the "Camp Fire" tab: Location in column A, up to 6 staff names in
- * columns B-G (dropdown cells — blanks are skipped). Row 1 is a header
- * ("Location" / "Staff"), data starts row 2.
- */
-function getCampFireData() {
-  const sheet = SS.getSheetByName("Camp Fire");
-  if (!sheet) return [];
-
-  const data = sheet.getDataRange().getValues();
-  if (data.length < 2) return [];
-
-  return data.slice(1)
-    .map(row => ({
-      location: String(row[0] || '').trim(),
-      staff: row.slice(1, 7).map(v => String(v || '').trim()).filter(Boolean)
-    }))
-    .filter(entry => entry.location);
-}
-
-function getStaffCabinList() {
-  const sheet = SS.getSheetByName("App Staff Cabin List");
-  if (!sheet) return [];
-
-  const data = sheet.getDataRange().getValues();
-  let currentLocation = '';
-  const result = [];
-
-  for (let i = 1; i < data.length; i++) { // skip header row
-    const row = data[i];
-    const locationCell = String(row[0] || '').trim();
-    const room = String(row[1] || '').trim();
-    const staff = [row[2], row[3], row[4], row[5]]
-      .map(v => String(v || '').trim())
-      .filter(v => v.length > 0);
-
-    if (locationCell) currentLocation = locationCell;
-    if (!room && staff.length === 0) continue; // skip blank/separator rows
-
-    result.push({
-      location: currentLocation,
-      room: room,
-      staff: staff
-    });
-  }
-  return result;
-}
-
-/**
- * Builds the data behind the "Staff Finder" feature: every staff member's
- * name/HOC flag from "App Staff List", combined with what they're doing in
- * each of the 4 daily periods. Duty assignments (the day-specific
- * Supervision roster) are deliberately NOT duplicated here — the front end
- * already loads that separately via the "duty" endpoint and combines it
- * client-side with what this function returns.
- *
- * Two source tabs feed the per-period picture, because neither one alone is
- * complete:
- *  - "Staff" is one row per PERSON, with a Session 1-4 column that already
- *    states exactly what they're doing that period — a class name, or a
- *    non-teaching role like "PREP", "HOC", "Nursing", "Napping", etc. This
- *    is the authoritative source and covers every staff member, teaching or
- *    not — but it has no venue/location.
- *  - "BETTER Program Info" is one row per CLASS, with a repeating 4-column
- *    block per period (S{n} Venue / S{n} Staff / S{n} Max Capacity /
- *    S{n} Enrolled). It only covers people who are teaching that period,
- *    but it does have the venue, so it's used here purely to fill that in
- *    wherever a "Staff" row's period matches up with a class instance.
- *
- * Both tabs give each person's name in the abbreviated "F.Last" form (see
- * "Staff" column O, "First Initial Last Name") — the same form "App Staff
- * List" column G already uses — so that's the join key across all three
- * tabs. Matching is done after stripping spaces/periods and lowercasing,
- * so a stray extra space or inconsistent capitalization doesn't silently
- * drop someone from their own schedule.
- */
-function getStaffFinderData() {
-  const staffSheet = SS.getSheetByName("App Staff List");
-  const activitySheet = SS.getSheetByName("Staff");
-  const programSheet = SS.getSheetByName("BETTER Program Info");
-  if (!staffSheet) return { roster: [], classSchedule: {} };
-
-  // --- Roster: name + abbreviation + HOC flag for every staff member ---
-  const staffData = staffSheet.getDataRange().getValues();
-  const roster = [];
-  for (let i = 1; i < staffData.length; i++) { // skip header row
-    const row = staffData[i];
-    const first = String(row[1] || '').trim();
-    const last = String(row[2] || '').trim();
-    const abbrev = String(row[6] || '').trim();
-    if (!first && !last) continue; // skip blank rows
-    roster.push({
-      name: (first + ' ' + last).trim(),
-      abbrev: abbrev,
-      isHoc: String(row[5]).toUpperCase() === 'TRUE'
-    });
-  }
-
-  // --- Attach a photo (Drive file ID) to each roster member, when findable ---
-  const photoMap = getStaffPhotoMap();
-  roster.forEach(function (person) {
-    const byFullName = photoMap[normalizeStaffKey(person.name)];
-    const byAbbrev = photoMap[normalizeStaffKey(person.abbrev)];
-    person.photoId = byFullName || byAbbrev || '';
-  });
-
-  // --- Per-period activity: normalized abbreviation -> { S1: text, ..., S4: text } ---
-  // "Staff" columns: A First, B Last, C (blank), D-G Session 1-4, ...,
-  // O First Initial Last Name.
-  const bySessionActivity = {};
-  if (activitySheet) {
-    const activityData = activitySheet.getDataRange().getValues();
-    const ACTIVITY_COLS = { S1: 3, S2: 4, S3: 5, S4: 6 };
-    for (let i = 1; i < activityData.length; i++) { // skip header row
-      const row = activityData[i];
-      const abbrev = String(row[14] || '').trim();
-      if (!abbrev) continue;
-      const key = normalizeStaffKey(abbrev);
-      const entry = {};
-      Object.keys(ACTIVITY_COLS).forEach(function (sessKey) {
-        const text = String(row[ACTIVITY_COLS[sessKey]] || '').trim();
-        if (text) entry[sessKey] = text;
-      });
-      bySessionActivity[key] = entry;
-    }
-  }
-
-  // --- Venue lookup: normalized abbreviation -> { S1: {class, venue}, ... } ---
-  const bySessionVenue = {};
-  // Also indexed by class name + period alone, independent of which staff
-  // member Program Info happens to list for that period — used as a
-  // fallback below so a venue still shows even if a person's "Staff" tab
-  // activity text and their Program Info staff listing don't line up for
-  // some reason, as long as the class name matches. A class's venue is
-  // normally the same regardless of who's listed as teaching it.
-  const classVenueBySession = {}; // normalizedClassName -> { S1: venue, ... }
-  if (programSheet) {
-    const programData = programSheet.getDataRange().getValues();
-    // "BETTER Program Info" columns: Class, then a 4-column block per
-    // session — S{n} Venue, S{n} Staff, S{n} Max Capacity, S{n} Enrolled
-    // (no separate "S{n}" column before the venue).
-    const SESSION_COLS = [
-      { key: 'S1', venueCol: 1, staffCol: 2 },
-      { key: 'S2', venueCol: 5, staffCol: 6 },
-      { key: 'S3', venueCol: 9, staffCol: 10 },
-      { key: 'S4', venueCol: 13, staffCol: 14 }
-    ];
-
-    for (let i = 1; i < programData.length; i++) { // skip header row
-      const row = programData[i];
-      const className = String(row[0] || '').trim();
-      if (!className) continue; // skip blank/separator rows
-      const classKey = normalizeStaffKey(className);
-
-      SESSION_COLS.forEach(function (sess) {
-        const venue = String(row[sess.venueCol] || '').trim();
-        if (venue) {
-          if (!classVenueBySession[classKey]) classVenueBySession[classKey] = {};
-          if (!classVenueBySession[classKey][sess.key]) classVenueBySession[classKey][sess.key] = venue;
-        }
-
-        const staffField = String(row[sess.staffCol] || '').trim();
-        if (!staffField) return;
-
-        staffField.split(',').forEach(function (nameRaw) {
-          const abbrev = nameRaw.trim();
-          if (!abbrev) return;
-          const key = normalizeStaffKey(abbrev);
-          if (!bySessionVenue[key]) bySessionVenue[key] = {};
-          const existing = bySessionVenue[key][sess.key];
-          // Extremely unlikely (one person double-booked in the same
-          // period), but combine rather than silently overwrite if it happens.
-          bySessionVenue[key][sess.key] = existing
-            ? { class: existing.class + ' & ' + className, venue: existing.venue || venue }
-            : { class: className, venue: venue };
-        });
-      });
-    }
-  }
-
-  // --- Combine: "Staff" tab's activity text is authoritative; attach a
-  // venue from "BETTER Program Info" whenever that same person+period also
-  // shows up there. If that direct match doesn't turn up a venue but the
-  // person's activity text names an actual class, fall back to that class's
-  // venue for the period regardless of who Program Info lists as teaching
-  // it — this is what makes the venue show up "whenever possible" even if
-  // the two tabs' staff listings don't perfectly agree. Falls back to the
-  // Program Info class name itself if a person is in Program Info for a
-  // period but missing from "Staff" (shouldn't normally happen, but keeps
-  // that period from vanishing). ---
-  const classSchedule = {};
-  roster.forEach(function (person) {
-    if (!person.abbrev) return;
-    const key = normalizeStaffKey(person.abbrev);
-    const activity = bySessionActivity[key] || {};
-    const venueInfo = bySessionVenue[key] || {};
-    const schedule = {};
-    ['S1', 'S2', 'S3', 'S4'].forEach(function (sessKey) {
-      const activityText = activity[sessKey];
-      const venueEntry = venueInfo[sessKey];
-      if (activityText) {
-        let venue = venueEntry ? venueEntry.venue : '';
-        if (!venue) {
-          // Direct person+period match found no venue — fall back to
-          // whatever venue Program Info lists for a class with this same
-          // name in this same period, regardless of who it credits as
-          // teaching it.
-          const classVenues = classVenueBySession[normalizeStaffKey(activityText)];
-          if (classVenues && classVenues[sessKey]) venue = classVenues[sessKey];
-        }
-        schedule[sessKey] = { activity: activityText, venue: venue };
-      } else if (venueEntry) {
-        schedule[sessKey] = { activity: venueEntry.class, venue: venueEntry.venue };
-      }
-    });
-    classSchedule[person.abbrev] = schedule;
-  });
-
-  return { roster: roster, classSchedule: classSchedule };
-}
-
+const TAB_LABELS = {
+  students: 'Artists',
+  attendance: 'attendance',
+  hoc: 'hoc',
+  schedule: 'schedule',
+  massage: 'Massage',
+  duty: 'Duty',
+  map: 'Map',
+  housing: 'Housing',
+  staffFinder: 'Find Staff',
+  cabins: 'Cabins',
+  emergency: 'Emergency',
+  venues: 'Venues',
+  photos: 'Photos',
+  diacSong: 'DIAC Song',
+  campFire: 'Camp Fire'
+};
+const DIAC_SONG_SECTIONS = [[{
+  chords: 'C               C7                  F      C',
+  lyric: 'I don’t know where friendship lives if it’s, not at DIAC'
+}, {
+  chords: 'C                           Am      C     G',
+  lyric: 'I don’t where else to go to be just who I am'
+}, {
+  chords: 'C                 C7',
+  lyric: 'To grow a little, take new steps'
+}, {
+  chords: '   E7               Am',
+  lyric: 'To take new risks I haven’t yet'
+}, {
+  chords: '      F        C    G            C',
+  lyric: 'Where else can I do that, but at DIAC?'
+}], [{
+  chords: '    G            F                C',
+  lyric: 'The passion to express myself has brought me here'
+}, {
+  chords: '         E7           Am         F                  G',
+  lyric: 'To reach deep into my heart, and live life with the aaaaarts!'
+}], [{
+  chords: 'C                  C7                       F       C',
+  lyric: 'I don’t know where acceptance lives if it’s, not at DIAC'
+}, {
+  chords: 'C                                  Am      C     G',
+  lyric: 'I don’t know where else to see the talents I see there'
+}, {
+  chords: 'C                   C7',
+  lyric: 'To find a family, a second home'
+}, {
+  chords: '   E7            Am',
+  lyric: 'To find a bigger comfort zone'
+}, {
+  chords: '      F        C    G              C',
+  lyric: 'Where else can I do that, but at DIAC?'
+}], [{
+  chords: '    G            F                C',
+  lyric: 'The passion to express myself has brought me here'
+}, {
+  chords: '         E7           Am         F                  G',
+  lyric: 'To reach deep into my heart, and live life with the aaaaarts!'
+}], [{
+  chords: 'C                  C7',
+  lyric: 'I don’t know where loving lives'
+}, {
+  chords: '    E7                   Am',
+  lyric: 'The kind that gives, and gives, and gives'
+}, {
+  chords: '      F              C       G    Am',
+  lyric: 'If it isn’t home, it must be at DIAC...OHHH!'
+}, {
+  chords: '      F              C       G    C',
+  lyric: 'If it isn’t home, it must be at DIAC!'
+}]];
+const ART_CLASS_NAMES = ["Watercolour (minor)", "Screen Printing", "Watercolour", "Acrylic", "Drawing", "Portraiture", "Harvesting and Processing Plant Medicines", "Photography", "Ceramics", "Crochet", "Mixed Media Arts", "Drawing - Gnu", "Drawing - Kiwi", "Comic Illustration & Storyboarding", "Printmaking", "Learning With Nature", "Drawing - Dolphin", "Indigenous Artisan Beadwork and Sewing"];
+// Must match PHOTOS_PER_PANEL_MAX in SlideDeckBuilder.gs (the 2x2 tile grid
+// per class panel) — used here only to show teachers when a student's
+// panel is already full, not to block uploads.
+const PHOTOS_PER_PANEL_MAX = 4;
 function normalizeStaffKey(text) {
   return String(text || '').replace(/[\s.]/g, '').toLowerCase();
 }
-
-/**
- * Scans the shared "Staff" photos Drive folder once and builds a lookup
- * from normalized filename (extension and spacing/punctuation stripped) to
- * Drive file ID, so a staff member's picture can be found however it
- * happens to be named — "Ryan Adams.jpg", "R.Adams.png", "RyanAdams.jpeg",
- * etc. all normalize to a matchable key the same way staff names are
- * normalized everywhere else in this file. Wrapped by the caller's cache
- * (getStaffFinderData is itself behind withCache), so this only runs on a
- * cache miss rather than every request.
- *
- * DELIBERATELY does NOT use DriveApp (the normal way to list a folder's
- * files) — that requires an extra OAuth scope which needs interactive
- * authorization, and on a school-board Google Workspace account that
- * consent step can be silently blocked by domain admin policy with no way
- * for a regular staff account to grant it. Since the folder is shared
- * "anyone with the link", its contents can instead be read through Drive's
- * plain public folder-embed page — an ordinary web page fetched with
- * UrlFetchApp, which this script already has permission for (it's the same
- * mechanism used to verify Google sign-in). No new permission needed.
- */
-// Some staff photo filenames use a nickname instead of the roster's full
-// first name (e.g. photo "Jay Jutzi.png" for roster name "Jason Jutzi").
-// Map normalized-nickname-key -> normalized-roster-key here as needed.
-const STAFF_PHOTO_NAME_ALIASES = {
-  "jayjutzi": "jasonjutzi"
-};
-
-// Force a specific Drive file ID for a given normalized name key, overriding
-// whatever the folder scan would otherwise pick (e.g. when two photos share
-// a name like "Andy Barber.png" / "Andy Barber2.png" and a particular one is
-// preferred).
-const STAFF_PHOTO_ID_OVERRIDES = {
-  "andybarber": "1_fKzHf2aAL7EFOa9IDj5RTQF1TFQ4HRO" // Andy Barber2.png
-};
-
-function getStaffPhotoMap() {
-  const map = {};
-  try {
-    const url = "https://drive.google.com/embeddedfolderview?id=" + STAFF_PHOTOS_FOLDER_ID + "#list";
-    const resp = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
-    if (resp.getResponseCode() !== 200) return map;
-
-    const html = resp.getContentText();
-    // Each file appears as a block like:
-    //   <div class="flip-entry" id="entry-<FILE_ID>"> ... <div class="flip-entry-title">NAME.jpg</div>
-    // Non-greedy match ties each title to the entry id immediately before it.
-    const entryRegex = /id="entry-([a-zA-Z0-9_-]+)"[\s\S]*?class="flip-entry-title"[^>]*>([^<]*)</g;
-    let match;
-    while ((match = entryRegex.exec(html)) !== null) {
-      const fileId = match[1];
-      const rawName = match[2].trim();
-      if (!rawName) continue;
-      const nameNoExt = rawName.replace(/\.[^.]+$/, '');
-      const key = normalizeStaffKey(nameNoExt);
-      if (key && !map[key]) map[key] = fileId;
-      const aliasKey = STAFF_PHOTO_NAME_ALIASES[key];
-      if (aliasKey && !map[aliasKey]) map[aliasKey] = fileId;
+function getDayKeyForDate(d) {
+  return d.toLocaleDateString('en-US', {
+    weekday: 'long'
+  }) + ' ' + d.getDate();
+}
+function staffMatchesWho(person, whoList) {
+  const whoNormalized = (whoList || []).map(normalizeStaffKey);
+  const fullKey = normalizeStaffKey(person.name);
+  const abbrevKey = normalizeStaffKey(person.abbrev);
+  if (whoNormalized.includes(fullKey) || whoNormalized.includes(abbrevKey)) return true;
+  const parts = person.name.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    const firstInitial = parts[0][0].toLowerCase();
+    const lastName = normalizeStaffKey(parts.slice(1).join(' '));
+    return whoNormalized.some(w => lastName && w.endsWith(lastName) && w.startsWith(firstInitial));
+  }
+  return false;
+}
+function parseDutyTimeRange(timeText, dutyText) {
+  const matches = [...String(timeText || '').matchAll(/(\d{1,2}):(\d{2})/g)];
+  if (matches.length < 2) return null;
+  const marker = /\bpm\b/i.test(dutyText) ? 'PM' : /\bam\b/i.test(dutyText) ? 'AM' : null;
+  const toMinutes = (h, m) => {
+    h = parseInt(h, 10);
+    if (marker === 'PM' && h < 12) h += 12;else if (marker === 'AM' && h === 12) h = 0;else if (!marker && h >= 1 && h <= 6) h += 12;
+    return h * 60 + parseInt(m, 10);
+  };
+  return {
+    start: toMinutes(matches[0][1], matches[0][2]),
+    end: toMinutes(matches[1][1], matches[1][2])
+  };
+}
+const CAMP_MAP_FILE_ID = "1uTp8Q_kTQgnnWPIlo0cqwRUo3nkBEnr9";
+const CAMP_MAP_IMAGE_URL = `https://lh3.googleusercontent.com/d/${CAMP_MAP_FILE_ID}=s1600`;
+const CAMP_MAP_FULLSCREEN_URL = `https://lh3.googleusercontent.com/d/${CAMP_MAP_FILE_ID}=s0`;
+const PERIOD_TIMES = [{
+  session: '1',
+  start: 9 * 60 + 0,
+  end: 10 * 60 + 15
+}, {
+  session: '2',
+  start: 10 * 60 + 30,
+  end: 11 * 60 + 45
+}, {
+  session: '3',
+  start: 13 * 60 + 30,
+  end: 14 * 60 + 45
+}, {
+  session: '4',
+  start: 15 * 60 + 0,
+  end: 16 * 60 + 15
+}];
+function getCurrentPeriod(now) {
+  const d = now || new Date();
+  const minutes = d.getHours() * 60 + d.getMinutes();
+  for (const p of PERIOD_TIMES) {
+    if (minutes >= p.start && minutes < p.end) return p.session;
+  }
+  for (const p of PERIOD_TIMES) {
+    if (minutes < p.start) return p.session;
+  }
+  return PERIOD_TIMES[PERIOD_TIMES.length - 1].session;
+}
+// lucide's createIcons() rewrites each "<i data-lucide>" placeholder into a
+// real <svg> directly in the live DOM — outside React's own tracking. That
+// used to be a straight, unwrapped React.createElement("i", ...), which
+// meant REACT was the one "owning" that exact DOM node — so the moment
+// lucide swapped it out from under React (e.g. an icon changing, like the
+// camera icon becoming a checkmark right after a photo upload), React's
+// next cleanup pass tried to remove a node that was no longer there and
+// crashed with a "removeChild" error. Wrapping the placeholder inside a
+// React-owned span via dangerouslySetInnerHTML fixes this: React then only
+// ever tracks the outer span as a single opaque unit and never reaches in
+// to manage the inner <i>/<svg> itself, so lucide is free to replace it
+// without React ever getting confused about what's there.
+const Icon = ({
+  name,
+  size = 20,
+  className = ""
+}) => {
+  useEffect(() => {
+    if (window.lucide && window.lucide.createIcons) window.lucide.createIcons();
+  }, [name]);
+  return React.createElement("span", {
+    style: {
+      display: "inline-flex",
+      width: size,
+      height: size
+    },
+    dangerouslySetInnerHTML: {
+      __html: `<i data-lucide="${name}" class="${className}" style="width:${size}px;height:${size}px"></i>`
     }
-  } catch (e) {
-    // Network hiccup or page structure changed — fail quietly, same as
-    // everywhere else here; staff just fall back to the generic icon.
-  }
-  Object.keys(STAFF_PHOTO_ID_OVERRIDES).forEach(function (key) {
-    map[key] = STAFF_PHOTO_ID_OVERRIDES[key];
   });
-  return map;
-}
-
-function getAttendanceStudents() {
-  const sheet = SS.getSheetByName("App Attendance Students");
-  const data = sheet.getDataRange().getValues();
-  return data.slice(1).map(row => ({
-    displayName: row[0],
-    S1: row[1],
-    S2: row[3],
-    S3: row[5],
-    S4: row[7]
-  }));
-}
-
-/**
- * Applies a batch of attendance updates inside a script lock, so two staff
- * submitting concurrently (or a double-tap from a no-cors call with no
- * feedback) can't create duplicate rows. Reads the sheet only after the
- * lock is acquired, and batches writes with setValues instead of one
- * setValue call per cell.
- */
-function bulkReportAbsences(updates, reportedByEmail) {
-  const lock = LockService.getScriptLock();
-  const gotLock = lock.tryLock(10000);
-  if (!gotLock) {
-    return { success: false, error: "System busy, please try again in a moment." };
+};
+const GoogleIcon = () => React.createElement("svg", {
+  width: "18",
+  height: "18",
+  viewBox: "0 0 48 48",
+  className: "shrink-0"
+}, React.createElement("path", {
+  fill: "#FFC107",
+  d: "M43.611,20.083H42V20H24v8h11.303c-1.649,4.657-6.08,8-11.303,8c-6.627,0-12-5.373-12-12c0-6.627,5.373-12,12-12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C12.955,4,4,12.955,4,24c0,11.045,8.955,20,20,20c11.045,0,20-8.955,20-20C44,22.659,43.862,21.35,43.611,20.083z"
+}), React.createElement("path", {
+  fill: "#FF3D00",
+  d: "M6.306,14.691l6.571,4.819C14.655,15.108,18.961,12,24,12c3.059,0,5.842,1.154,7.961,3.039l5.657-5.657C34.046,6.053,29.268,4,24,4C16.318,4,9.656,8.337,6.306,14.691z"
+}), React.createElement("path", {
+  fill: "#4CAF50",
+  d: "M24,44c5.166,0,9.86-1.977,13.409-5.192l-6.19-5.238C29.211,35.091,26.715,36,24,36c-5.202,0-9.619-3.317-11.283-7.946l-6.522,5.025C9.505,39.556,16.227,44,24,44z"
+}), React.createElement("path", {
+  fill: "#1976D2",
+  d: "M43.611,20.083H42V20H24v8h11.303c-0.792,2.237-2.231,4.166-4.087,5.571c0.001-0.001,0.002-0.001,0.003-0.002l6.19,5.238C36.971,39.205,44,34,44,24C44,22.659,43.862,21.35,43.611,20.083z"
+}));
+const getDirectDriveUrl = url => {
+  if (!url) return null;
+  const s = String(url).trim();
+  if (s.includes('drive.google.com')) {
+    let id = "";
+    if (s.includes('id=')) {
+      id = s.split('id=')[1].split('&')[0];
+    } else if (s.includes('/file/d/')) {
+      id = s.split('/file/d/')[1].split('/')[0];
+    }
+    return id ? `https://lh3.googleusercontent.com/d/${id}=s400` : s;
   }
-
-  try {
-    const sheet = SS.getSheetByName("App Attendance Absences");
-    const data = sheet.getDataRange().getValues();
-    const timestamp = new Date();
-    const todayStr = Utilities.formatDate(timestamp, Session.getScriptTimeZone(), "yyyy-MM-dd");
-    const rowsToAppend = [];
-
-    updates.forEach(upd => {
-      const status = validateStatus(upd.status);
-      if (!status) return; // silently skip anything not on the allowlist
-
-      const studentName = sanitizeCell(String(upd.studentName || ''));
-      const cabin = sanitizeCell(String(upd.cabin || ''));
-      const activity = sanitizeCell(String(upd.activity || ''));
-      const session = String(upd.session || '');
-      const studentId = sanitizeCell(String(upd.studentId || '000'));
-
-      let rowIndex = -1;
-      for (let i = 1; i < data.length; i++) {
-        const rowDateStr = Utilities.formatDate(new Date(data[i][7]), Session.getScriptTimeZone(), "yyyy-MM-dd");
-        if (data[i][2] === studentName &&
-            String(data[i][4]) === session &&
-            data[i][5] === activity &&
-            rowDateStr === todayStr) {
-          rowIndex = i + 1;
-          break;
-        }
-      }
-
-      if (rowIndex > -1) {
-        sheet.getRange(rowIndex, 7, 1, 3).setValues([[reportedByEmail, timestamp, status]]);
+  if (!s.includes('http') && !s.includes('/')) {
+    return `https://lh3.googleusercontent.com/d/${s}=s400`;
+  }
+  return s;
+};
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = {
+      hasError: false,
+      errorText: ''
+    };
+  }
+  static getDerivedStateFromError(error) {
+    return {
+      hasError: true,
+      errorText: (error && (error.stack || error.message || String(error))) || 'Unknown error'
+    };
+  }
+  componentDidCatch(error, info) {
+    console.error('DIAC Hub crashed:', error, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      return React.createElement("div", {
+        className: "min-h-screen flex items-center justify-center bg-slate-50 p-6"
+      }, React.createElement("div", {
+        className: "max-w-sm w-full bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100 text-center space-y-3"
+      }, React.createElement(Icon, {
+        name: "alert-triangle",
+        size: 28,
+        className: "text-amber-500 mx-auto"
+      }), React.createElement("h2", {
+        className: "text-base font-black text-slate-800"
+      }, "Something went wrong"), React.createElement("p", {
+        className: "text-xs text-slate-400 font-medium"
+      }, "You're still signed in, so tapping below will take you right back — no need to sign in again."), React.createElement("button", {
+        onClick: () => window.location.reload(),
+        className: "w-full bg-indigo-600 text-white text-xs font-black uppercase tracking-widest py-3 rounded-xl"
+      }, "Continue"),
+      // Diagnostic detail — not pretty on purpose. If this shows up,
+      // screenshot it and send it along so the actual cause can be found
+      // instead of guessing at it blind.
+      React.createElement("pre", {
+        className: "text-left text-[9px] text-slate-400 bg-slate-50 rounded-lg p-2 overflow-x-auto whitespace-pre-wrap break-words max-h-32 overflow-y-auto"
+      }, this.state.errorText)));
+    }
+    return this.props.children;
+  }
+}
+function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isHoc, setIsHoc] = useState(false);
+  const [currentUser, setCurrentUser] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [tokenClient, setTokenClient] = useState(null);
+  const [sessionToken, setSessionToken] = useState('');
+  const [fetchError, setFetchError] = useState('');
+  const [submitError, setSubmitError] = useState('');
+  const [activeTab, setActiveTab] = useState('students');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [dutySearchQuery, setDutySearchQuery] = useState('');
+  const [students, setStudents] = useState([]);
+  const [schedule, setSchedule] = useState([]);
+  const [absences, setAbsences] = useState([]);
+  const [classes, setClasses] = useState({
+    S1: [],
+    S2: [],
+    S3: [],
+    S4: []
+  });
+  const [attStudents, setAttStudents] = useState([]);
+  const [massageSchedule, setMassageSchedule] = useState([]);
+  const [dutyRoster, setDutyRoster] = useState([]);
+  const [staffHousing, setStaffHousing] = useState([]);
+  const [staffRoster, setStaffRoster] = useState([]);
+  const [staffClassSchedule, setStaffClassSchedule] = useState({});
+  const [staffPickerQuery, setStaffPickerQuery] = useState('');
+  const [selectedStaffIndex, setSelectedStaffIndex] = useState(null);
+  const [staffFinderDate, setStaffFinderDate] = useState(() => {
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  });
+  const [cabins, setCabins] = useState([]);
+  const [selectedCabinIndex, setSelectedCabinIndex] = useState(null);
+  const [emergencyData, setEmergencyData] = useState({
+    title: '',
+    zones: [],
+    notes: []
+  });
+  const [venuesData, setVenuesData] = useState({
+    periodKeys: [],
+    venues: []
+  });
+  const [campFire, setCampFire] = useState([]);
+  const [photoPeriod, setPhotoPeriod] = useState('S1');
+  const [photoClassName, setPhotoClassName] = useState('');
+  const [photoRoster, setPhotoRoster] = useState([]);
+  const [photoRosterLoading, setPhotoRosterLoading] = useState(false);
+  const [photoRosterError, setPhotoRosterError] = useState('');
+  const [photoUploadingKey, setPhotoUploadingKey] = useState(null);
+  const [photoUploadError, setPhotoUploadError] = useState('');
+  const photoFileInputRef = useRef(null);
+  const photoUploadTargetRef = useRef(null);
+  const [venueSearchQuery, setVenueSearchQuery] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [selectedStudent, setSelectedStudent] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [attSession, setAttSession] = useState(() => getCurrentPeriod());
+  const [attSessionAuto, setAttSessionAuto] = useState(true);
+  const [attActivity, setAttActivity] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [localAttendance, setLocalAttendance] = useState({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [hocSyncingId, setHocSyncingId] = useState(null);
+  const [hocSession, setHocSession] = useState('1');
+  const [hocNotes, setHocNotes] = useState({});
+  useEffect(() => {
+    const user = localStorage.getItem('diac_user');
+    const hoc = localStorage.getItem('diac_hoc');
+    const session = localStorage.getItem('diac_session');
+    if (user && session) {
+      setIsAuthenticated(true);
+      setCurrentUser(user);
+      setIsHoc(hoc === 'true');
+      setSessionToken(session);
+      fetchData(session);
+    } else {
+      setLoading(false);
+    }
+    const savedPeriod = localStorage.getItem('diac_photo_period');
+    const savedClass = localStorage.getItem('diac_photo_class');
+    if (savedPeriod) setPhotoPeriod(savedPeriod);
+    if (savedClass) setPhotoClassName(savedClass);
+  }, []);
+  useEffect(() => {
+    localStorage.setItem('diac_photo_period', photoPeriod);
+  }, [photoPeriod]);
+  useEffect(() => {
+    if (photoClassName) localStorage.setItem('diac_photo_class', photoClassName);else localStorage.removeItem('diac_photo_class');
+  }, [photoClassName]);
+  const logout = () => {
+    localStorage.removeItem('diac_user');
+    localStorage.removeItem('diac_hoc');
+    localStorage.removeItem('diac_session');
+    window.location.reload();
+  };
+  useEffect(() => {
+    if (isAuthenticated) return;
+    let cancelled = false;
+    const initGis = () => {
+      if (cancelled) return;
+      if (typeof google !== 'undefined' && google.accounts && google.accounts.oauth2) {
+        const client = google.accounts.oauth2.initTokenClient({
+          client_id: GOOGLE_CLIENT_ID,
+          scope: 'https://www.googleapis.com/auth/userinfo.email',
+          ux_mode: 'redirect',
+          redirect_uri: window.location.origin + window.location.pathname,
+          callback: handleGoogleSsoCallback
+        });
+        setTokenClient(client);
       } else {
-        const id = Utilities.getUuid();
-        rowsToAppend.push([id, studentId, studentName, cabin, session, activity, reportedByEmail, timestamp, status, '']);
+        setTimeout(initGis, 300);
+      }
+    };
+    initGis();
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated]);
+  const handleGoogleSsoCallback = async response => {
+    if (window.location.hash) {
+      window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+    }
+    if (!response || response.error) {
+      setIsLoggingIn(false);
+      if (response && response.error !== 'popup_closed' && response.error !== 'popup_closed_by_user') {
+        setAuthError('Google sign-in failed. Please try again.');
+      }
+      return;
+    }
+    setIsLoggingIn(true);
+    setAuthError('');
+    try {
+      const data = await fetchWithRetry(`${SCRIPT_URL}?action=login&token=${encodeURIComponent(response.access_token)}`);
+      if (data.success) {
+        localStorage.setItem('diac_user', data.email);
+        localStorage.setItem('diac_hoc', String(data.isHoc));
+        localStorage.setItem('diac_session', data.session);
+        setIsAuthenticated(true);
+        setCurrentUser(data.email);
+        setIsHoc(data.isHoc);
+        setSessionToken(data.session);
+        fetchData(data.session);
+      } else if (data.error === 'network') {
+        setAuthError("Connection Error — check your signal and try again.");
+      } else {
+        setAuthError(data.error || "Login Failed");
+      }
+    } catch (e) {
+      setAuthError("Connection Error");
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+  const handleSignInClick = () => {
+    if (!tokenClient) return;
+    setAuthError('');
+    setIsLoggingIn(true);
+    tokenClient.requestAccessToken({
+      prompt: ''
+    });
+  };
+  // GET requests only (safe to repeat) — retries a flaky fetch a couple of
+  // times with a short backoff before giving up. On weak 3G/LTE a lot of
+  // "could not connect" errors are just a single dropped packet or a
+  // momentary signal gap, not a real outage, so this alone clears up a good
+  // chunk of them without the person having to notice or do anything.
+  const fetchWithRetry = async (url, retries = 2, delayMs = 800) => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const res = await fetch(url);
+        return await res.json();
+      } catch (e) {
+        if (attempt >= retries) return { error: 'network' };
+        await new Promise(r => setTimeout(r, delayMs * (attempt + 1)));
+      }
+    }
+  };
+
+  const fetchData = async tokenOverride => {
+    const token = tokenOverride || sessionToken;
+    if (!token) return;
+    setRefreshing(true);
+    setFetchError('');
+    try {
+      const results = await fetchWithRetry(`${SCRIPT_URL}?action=all&session=${encodeURIComponent(token)}`);
+      if (results && typeof results.error === 'string' && results.error.startsWith('Unauthorized')) {
+        setFetchError('Your session expired. Please sign in again.');
+        logout();
+        return;
+      }
+      if (results && typeof results.error === 'string') {
+        setFetchError('Could not refresh: ' + results.error + '. Showing the last version loaded — check your connection and try again.');
+        return;
+      }
+      const keys = ['students', 'schedule', 'absences', 'classes', 'attStudents', 'massageSchedule', 'duty', 'housing', 'staffFinder', 'cabins', 'emergency', 'venues', 'campFire'];
+      const failedKeys = keys.filter(k => !results[k] || results[k].error);
+      const failed = failedKeys.length > 0;
+      if (failed) {
+        setFetchError(`Could not refresh: ${failedKeys.join(', ')}. Showing the last version loaded — check your connection and try again.`);
+      }
+      if (results.students && !results.students.error) setStudents(results.students);
+      if (results.schedule && !results.schedule.error) setSchedule(results.schedule);
+      if (results.absences && !results.absences.error) {
+        setAbsences(results.absences);
+        const initialLocal = {};
+        const today = new Date().toDateString();
+        results.absences.forEach(abs => {
+          const absDate = new Date(abs.timestamp).toDateString();
+          if (absDate === today) {
+            initialLocal[`${abs.studentName}-${abs.session}-${abs.activity}`] = abs.status;
+          }
+        });
+        setLocalAttendance(prev => ({
+          ...prev,
+          ...initialLocal
+        }));
+      }
+      if (results.classes && !results.classes.error) setClasses(results.classes);
+      if (results.attStudents && !results.attStudents.error) setAttStudents(results.attStudents);
+      if (results.massageSchedule && !results.massageSchedule.error) setMassageSchedule(results.massageSchedule);
+      if (results.duty && !results.duty.error) setDutyRoster(results.duty);
+      if (results.housing && !results.housing.error) setStaffHousing(results.housing);
+      if (results.staffFinder && !results.staffFinder.error) {
+        setStaffRoster(Array.isArray(results.staffFinder.roster) ? results.staffFinder.roster : []);
+        setStaffClassSchedule(results.staffFinder.classSchedule || {});
+      }
+      if (results.cabins && !results.cabins.error) setCabins(results.cabins);
+      if (results.emergency && !results.emergency.error) setEmergencyData(results.emergency);
+      if (results.venues && !results.venues.error) setVenuesData(results.venues);
+      if (results.campFire && !results.campFire.error) setCampFire(results.campFire);
+      if (!failed) {
+        setLastUpdated(new Date().toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit'
+        }));
+      }
+    } catch (e) {
+      setFetchError('Could not refresh data — showing the last version loaded. Check your connection and try again.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+      setHocSyncingId(null);
+    }
+  };
+  const fetchPhotoRoster = async (period, className) => {
+    if (!className) {
+      setPhotoRoster([]);
+      return;
+    }
+    setPhotoRosterLoading(true);
+    setPhotoRosterError('');
+    try {
+      const data = await fetchWithRetry(`${SCRIPT_URL}?action=classRoster&period=${encodeURIComponent(period)}&className=${encodeURIComponent(className)}&session=${encodeURIComponent(sessionToken)}`);
+      if (!Array.isArray(data)) {
+        setPhotoRosterError(data && data.error || 'Could not load that class.');
+        setPhotoRoster([]);
+        return;
+      }
+      setPhotoRoster(data);
+    } catch (e) {
+      setPhotoRosterError('Could not load that class — check your connection and try again.');
+      setPhotoRoster([]);
+    } finally {
+      setPhotoRosterLoading(false);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === 'photos' && photoClassName) {
+      fetchPhotoRoster(photoPeriod, photoClassName);
+    }
+  }, [activeTab, photoPeriod, photoClassName]);
+  const compressImageForUpload = async file => {
+    const maxEdge = 1024;
+    if (typeof createImageBitmap === 'function') {
+      let bitmap;
+      try {
+        bitmap = await createImageBitmap(file);
+        let {
+          width,
+          height
+        } = bitmap;
+        if (width > maxEdge || height > maxEdge) {
+          if (width >= height) {
+            height = Math.round(height * (maxEdge / width));
+            width = maxEdge;
+          } else {
+            width = Math.round(width * (maxEdge / height));
+            height = maxEdge;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(bitmap, 0, 0, width, height);
+        bitmap.close();
+        bitmap = null;
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
+        canvas.width = 0;
+        canvas.height = 0;
+        return dataUrl.split(',')[1];
+      } catch (e) {
+        if (bitmap) bitmap.close();
+      }
+    }
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Could not read photo.'));
+      reader.onload = () => {
+        img.onerror = () => reject(new Error('Could not read photo.'));
+        img.onload = () => {
+          let {
+            width,
+            height
+          } = img;
+          if (width > maxEdge || height > maxEdge) {
+            if (width >= height) {
+              height = Math.round(height * (maxEdge / width));
+              width = maxEdge;
+            } else {
+              width = Math.round(width * (maxEdge / height));
+              height = maxEdge;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
+          canvas.width = 0;
+          canvas.height = 0;
+          img.onload = null;
+          img.src = '';
+          resolve(dataUrl.split(',')[1]);
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+  const openPhotoPicker = student => {
+    photoUploadTargetRef.current = student;
+    setPhotoUploadError('');
+    if (photoFileInputRef.current) photoFileInputRef.current.click();
+  };
+  const handlePhotoFileSelected = async e => {
+    const file = e.target.files && e.target.files[0];
+    const student = photoUploadTargetRef.current;
+    e.target.value = '';
+    if (!file || !student) return;
+    setPhotoUploadingKey(student.stuNum);
+    setPhotoUploadError('');
+    try {
+      const photoBase64 = await compressImageForUpload(file);
+      const res = await fetch(SCRIPT_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: new URLSearchParams({
+          action: 'uploadPhoto',
+          session: sessionToken,
+          period: photoPeriod,
+          className: photoClassName,
+          stuNum: student.stuNum,
+          firstName: student.firstName,
+          lastName: student.lastName,
+          grade: student.grade,
+          mimeType: 'image/jpeg',
+          photoBase64: photoBase64
+        })
+      });
+      const data = await res.json();
+      if (!data || data.success !== true) {
+        setPhotoUploadError(data && data.error || 'Could not upload photo. Please try again.');
+        return;
+      }
+      setPhotoRoster(prev => prev.map(s => s.stuNum === student.stuNum ? {
+        ...s,
+        photoCount: (s.photoCount || 0) + 1
+      } : s));
+    } catch (e) {
+      setPhotoUploadError('Could not upload photo — check your connection and try again.');
+    } finally {
+      setPhotoUploadingKey(null);
+    }
+  };
+  useEffect(() => {
+    if (activeTab === 'attendance' && attSessionAuto) {
+      setAttSession(getCurrentPeriod());
+    }
+  }, [activeTab]);
+  useEffect(() => {
+    if (!isAuthenticated || !isHoc || activeTab !== 'hoc') return;
+    const interval = setInterval(() => {
+      fetchData();
+    }, 20000);
+    return () => clearInterval(interval);
+  }, [isAuthenticated, isHoc, activeTab, sessionToken]);
+  const stageStatusChange = (studentName, newStatus) => {
+    const key = `${studentName}-${attSession}-${attActivity}`;
+    setLocalAttendance(prev => ({
+      ...prev,
+      [key]: newStatus
+    }));
+  };
+  const DEFAULT_STATUS = 'Present';
+  const handleNoteChange = (id, text) => {
+    setHocNotes(prev => ({
+      ...prev,
+      [id]: text
+    }));
+  };
+  const handleHocUpdate = async (studentName, currentAbsence, newStatus, noteText) => {
+    setHocSyncingId(currentAbsence.id);
+    setFetchError('');
+    try {
+      const res = await fetch(SCRIPT_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: new URLSearchParams({
+          action: 'updateAbsence',
+          session: sessionToken,
+          id: currentAbsence.id,
+          status: newStatus,
+          note: noteText || ''
+        })
+      });
+      const data = await res.json();
+      if (!data || data.success !== true) {
+        setFetchError(data && data.error || 'Could not save that update. Please try again.');
+        setHocSyncingId(null);
+        return;
+      }
+      const key = `${studentName}-${currentAbsence.session}-${currentAbsence.activity}`;
+      setLocalAttendance(prev => ({
+        ...prev,
+        [key]: newStatus
+      }));
+      await fetchData();
+    } catch (e) {
+      setFetchError('Could not save that update — check your connection and try again.');
+      setHocSyncingId(null);
+    }
+  };
+  const handleSubmitAttendance = async () => {
+    setIsSubmitting(true);
+    setSubmitError('');
+    const updates = [];
+    const today = new Date().toDateString();
+    enrolledInCurrent.forEach(s => {
+      const name = s.displayName;
+      const key = `${name}-${attSession}-${attActivity}`;
+      const status = localAttendance[key] || DEFAULT_STATUS;
+      const existing = absences.find(a => {
+        const absDate = new Date(a.timestamp).toDateString();
+        return a.studentName === name && String(a.session) === String(attSession) && a.activity === attActivity && absDate === today;
+      });
+      if (!existing || existing.status !== status) {
+        const studentData = students.find(st => st.preferredName === name);
+        updates.push({
+          id: existing ? existing.id : null,
+          studentId: studentData ? studentData.stuNum : '000',
+          studentName: name,
+          cabin: studentData ? studentData.cabin : 'Unknown',
+          session: attSession,
+          activity: attActivity,
+          status: status,
+          reportedBy: currentUser
+        });
       }
     });
-
-    if (rowsToAppend.length > 0) {
-      const startRow = sheet.getLastRow() + 1;
-      sheet.getRange(startRow, 1, rowsToAppend.length, 10).setValues(rowsToAppend);
+    if (updates.length === 0) {
+      setIsSubmitting(false);
+      return;
     }
-
-    return { success: true };
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-function updateAbsenceStatus(id, status, note, updatedByEmail) {
-  const validStatus = validateStatus(status);
-  if (!validStatus) {
-    return { success: false, error: "Invalid status." };
-  }
-
-  const lock = LockService.getScriptLock();
-  const gotLock = lock.tryLock(10000);
-  if (!gotLock) {
-    return { success: false, error: "System busy, please try again in a moment." };
-  }
-
-  try {
-    const sheet = SS.getSheetByName("App Attendance Absences");
-    const data = sheet.getDataRange().getValues();
-    const cleanNote = sanitizeCell(String(note || ''));
-
-    for (let i = 1; i < data.length; i++) {
-      if (String(data[i][0]) === String(id)) {
-        // Columns: 7 timestamp, 9 status, 10 note
-        sheet.getRange(i + 1, 8).setValue(new Date());
-        sheet.getRange(i + 1, 9).setValue(validStatus);
-        sheet.getRange(i + 1, 10).setValue(cleanNote);
-        return { success: true };
+    try {
+      const res = await fetch(SCRIPT_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: new URLSearchParams({
+          action: 'bulkReport',
+          session: sessionToken,
+          data: JSON.stringify(updates)
+        })
+      });
+      const data = await res.json();
+      if (!data || data.success !== true) {
+        setSubmitError(data && data.error || 'Could not save attendance. Please try again.');
+        setIsSubmitting(false);
+        return;
+      }
+      await fetchData();
+    } catch (e) {
+      setSubmitError('Could not save attendance — check your connection and try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+  const sortedArtists = useMemo(() => {
+    if (!Array.isArray(students)) return [];
+    return [...students].sort((a, b) => {
+      const lastA = String(a.lastName || "").toLowerCase();
+      const lastB = String(b.lastName || "").toLowerCase();
+      if (lastA !== lastB) return lastA.localeCompare(lastB);
+      return String(a.firstName || "").toLowerCase().localeCompare(String(b.firstName || "").toLowerCase());
+    });
+  }, [students]);
+  const filteredStudents = useMemo(() => {
+    const query = searchQuery.toLowerCase().trim();
+    return sortedArtists.filter(s => String(s.preferredName || "").toLowerCase().includes(query) || String(s.firstName || "").toLowerCase().includes(query) || String(s.lastName || "").toLowerCase().includes(query));
+  }, [sortedArtists, searchQuery]);
+  const filteredVenues = useMemo(() => {
+    const query = venueSearchQuery.toLowerCase().trim();
+    if (!query) return venuesData.venues;
+    return venuesData.venues.filter(v => v.venue.toLowerCase().includes(query) || venuesData.periodKeys.some(pk => String(v.periods[pk] || '').toLowerCase().includes(query)));
+  }, [venuesData, venueSearchQuery]);
+  const totalPages = Math.max(1, Math.ceil(filteredStudents.length / PAGE_SIZE));
+  const pagedStudents = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return filteredStudents.slice(start, start + PAGE_SIZE);
+  }, [filteredStudents, currentPage]);
+  const enrolledInCurrent = useMemo(() => {
+    if (!attActivity || !Array.isArray(attStudents)) return [];
+    const sessKey = `S${attSession}`;
+    return attStudents.filter(s => s[sessKey] === attActivity);
+  }, [attStudents, attActivity, attSession]);
+  const hasUnsavedChanges = useMemo(() => {
+    const today = new Date().toDateString();
+    return enrolledInCurrent.some(s => {
+      const name = s.displayName;
+      const key = `${name}-${attSession}-${attActivity}`;
+      const localStatus = localAttendance[key] || DEFAULT_STATUS;
+      const serverAbsence = absences.find(a => a.studentName === name && String(a.session) === String(attSession) && a.activity === attActivity && new Date(a.timestamp).toDateString() === today);
+      const serverStatus = serverAbsence ? serverAbsence.status : 'Not Completed';
+      return localStatus !== serverStatus;
+    });
+  }, [enrolledInCurrent, localAttendance, absences, attSession, attActivity]);
+  const groupedMassage = useMemo(() => {
+    if (!Array.isArray(massageSchedule)) return [];
+    const groups = [];
+    const byDay = {};
+    massageSchedule.forEach(entry => {
+      const dayKey = entry.day || 'Unscheduled';
+      if (!byDay[dayKey]) {
+        byDay[dayKey] = {
+          day: dayKey,
+          entries: []
+        };
+        groups.push(byDay[dayKey]);
+      }
+      byDay[dayKey].entries.push(entry);
+    });
+    return groups;
+  }, [massageSchedule]);
+  const groupedDuty = useMemo(() => {
+    if (!Array.isArray(dutyRoster)) return [];
+    const query = dutySearchQuery.toLowerCase().trim();
+    const filtered = query ? dutyRoster.filter(entry => {
+      const whoText = Array.isArray(entry.who) ? entry.who.join(', ') : String(entry.who || '');
+      return whoText.toLowerCase().includes(query);
+    }) : dutyRoster;
+    const groups = [];
+    const byDay = {};
+    filtered.forEach(entry => {
+      const dayKey = entry.day || 'Unscheduled';
+      if (!byDay[dayKey]) {
+        byDay[dayKey] = {
+          day: dayKey,
+          entries: []
+        };
+        groups.push(byDay[dayKey]);
+      }
+      byDay[dayKey].entries.push(entry);
+    });
+    return groups;
+  }, [dutyRoster, dutySearchQuery]);
+  const groupedHousing = useMemo(() => {
+    if (!Array.isArray(staffHousing)) return [];
+    const groups = [];
+    const byLocation = {};
+    staffHousing.forEach(entry => {
+      const locKey = entry.location || 'Unassigned';
+      if (!byLocation[locKey]) {
+        byLocation[locKey] = {
+          location: locKey,
+          rooms: []
+        };
+        groups.push(byLocation[locKey]);
+      }
+      byLocation[locKey].rooms.push(entry);
+    });
+    return groups;
+  }, [staffHousing]);
+  const studentsByKey = useMemo(() => {
+    const map = {};
+    students.forEach(s => {
+      const preferredKey = normalizeStaffKey(s.preferredName);
+      const legalKey = normalizeStaffKey(`${s.firstName || ''} ${s.lastName || ''}`);
+      if (preferredKey && !map[preferredKey]) map[preferredKey] = s;
+      if (legalKey && !map[legalKey]) map[legalKey] = s;
+    });
+    return map;
+  }, [students]);
+  const findStudentByName = name => {
+    const key = normalizeStaffKey(name);
+    if (!key) return null;
+    return studentsByKey[key] || null;
+  };
+  const staffByKey = useMemo(() => {
+    const map = {};
+    staffRoster.forEach(p => {
+      const fullKey = normalizeStaffKey(p.name);
+      const abbrevKey = normalizeStaffKey(p.abbrev);
+      if (fullKey) map[fullKey] = p;
+      if (abbrevKey) map[abbrevKey] = p;
+    });
+    return map;
+  }, [staffRoster]);
+  const findStaffByDisplayName = name => {
+    const cleaned = String(name || '').replace(/\s*\([^)]*\)\s*/g, ' ').trim();
+    const key = normalizeStaffKey(cleaned);
+    if (!key) return null;
+    if (staffByKey[key]) return staffByKey[key];
+    for (const p of staffRoster) {
+      const parts = p.name.trim().split(/\s+/);
+      if (parts.length < 2) continue;
+      const firstInitial = parts[0][0].toLowerCase();
+      const lastName = normalizeStaffKey(parts.slice(1).join(' '));
+      if (lastName && key.endsWith(lastName) && key.startsWith(firstInitial)) return p;
+    }
+    const rawParts = cleaned.split(/\s+/);
+    if (rawParts.length >= 2) {
+      const givenFirst = normalizeStaffKey(rawParts[0]);
+      const givenLastInitial = rawParts[rawParts.length - 1].replace(/[^a-zA-Z]/g, '').toLowerCase();
+      if (givenFirst && givenLastInitial.length === 1) {
+        const matches = staffRoster.filter(p => {
+          const parts = p.name.trim().split(/\s+/);
+          if (parts.length < 2) return false;
+          const pFirst = normalizeStaffKey(parts[0]);
+          const pLastInitial = parts[parts.length - 1][0].toLowerCase();
+          return pFirst === givenFirst && pLastInitial === givenLastInitial;
+        });
+        if (matches.length === 1) return matches[0];
       }
     }
-    return { success: false, error: "Record not found." };
-  } finally {
-    lock.releaseLock();
-  }
+    return null;
+  };
+  const goToStaffMember = person => {
+    setSelectedStaffIndex(staffRoster.indexOf(person));
+    setActiveTab('staffFinder');
+  };
+  const StaffAvatar = ({
+    name,
+    size
+  }) => {
+    const person = findStaffByDisplayName(name);
+    const dim = size || 28;
+    return React.createElement("div", {
+      className: "rounded-full bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden shrink-0",
+      style: {
+        width: dim,
+        height: dim
+      }
+    }, person && person.photoId ? React.createElement("img", {
+      src: getDirectDriveUrl(person.photoId),
+      className: "w-full h-full object-cover"
+    }) : React.createElement(Icon, {
+      name: "user",
+      size: Math.round(dim * 0.5),
+      className: "text-slate-200"
+    }));
+  };
+  const filteredStaffRoster = useMemo(() => {
+    const sorted = [...staffRoster].sort((a, b) => a.name.localeCompare(b.name));
+    const query = staffPickerQuery.toLowerCase().trim();
+    if (!query) return sorted;
+    return sorted.filter(p => p.name.toLowerCase().includes(query));
+  }, [staffRoster, staffPickerQuery]);
+  const selectedStaffPerson = selectedStaffIndex !== null ? staffRoster[selectedStaffIndex] : null;
+  const whereAreTheyNow = useMemo(() => {
+    if (!selectedStaffPerson) return null;
+    const now = new Date();
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    const dayKey = getDayKeyForDate(now);
+    const todaysDuty = (Array.isArray(dutyRoster) ? dutyRoster : []).filter(e => e.day === dayKey && staffMatchesWho(selectedStaffPerson, e.who));
+    for (const entry of todaysDuty) {
+      const range = parseDutyTimeRange(entry.time, entry.duty);
+      if (range && nowMinutes >= range.start && nowMinutes <= range.end) {
+        return {
+          type: 'duty',
+          label: entry.duty,
+          where: entry.where,
+          time: entry.time
+        };
+      }
+    }
+    const period = getCurrentPeriod(now);
+    const sched = (staffClassSchedule[selectedStaffPerson.abbrev] || {})['S' + period];
+    if (sched) return {
+      type: 'class',
+      label: sched.activity,
+      where: sched.venue,
+      session: period
+    };
+    return {
+      type: 'free',
+      session: period
+    };
+  }, [selectedStaffPerson, dutyRoster, staffClassSchedule]);
+  const staffScheduleForDate = useMemo(() => {
+    if (!selectedStaffPerson || !staffFinderDate) return null;
+    const d = new Date(staffFinderDate + 'T00:00:00');
+    const dayKey = getDayKeyForDate(d);
+    const dutyForDay = (Array.isArray(dutyRoster) ? dutyRoster : []).filter(e => e.day === dayKey && staffMatchesWho(selectedStaffPerson, e.who));
+    const classSched = staffClassSchedule[selectedStaffPerson.abbrev] || {};
+    return {
+      dayKey,
+      duty: dutyForDay,
+      classes: classSched
+    };
+  }, [selectedStaffPerson, staffFinderDate, dutyRoster, staffClassSchedule]);
+  const DetailRow = ({
+    label,
+    value,
+    icon
+  }) => React.createElement("div", {
+    className: "flex items-start gap-4 p-4 bg-white/70 backdrop-blur-sm rounded-2xl border border-white shadow-sm"
+  }, React.createElement("div", {
+    className: "p-2 bg-indigo-50 text-indigo-600 rounded-xl shrink-0"
+  }, React.createElement(Icon, {
+    name: icon,
+    size: 18
+  })), React.createElement("div", null, React.createElement("div", {
+    className: "text-[10px] font-black text-slate-400 uppercase tracking-widest"
+  }, label), React.createElement("div", {
+    className: "text-sm font-bold text-slate-900"
+  }, value || 'N/A')));
+  const Pagination = ({
+    pos
+  }) => React.createElement("div", {
+    className: `flex items-center justify-between bg-white px-4 py-3 rounded-2xl border border-slate-200 shadow-sm ${pos === 'top' ? 'mb-4' : 'mt-4'}`
+  }, React.createElement("button", {
+    disabled: currentPage === 1,
+    onClick: () => {
+      setCurrentPage(p => p - 1);
+      window.scrollTo(0, 0);
+    },
+    className: "p-2 disabled:opacity-20 text-indigo-600"
+  }, React.createElement(Icon, {
+    name: "chevron-left"
+  })), React.createElement("span", {
+    className: "text-[10px] font-black text-slate-400 uppercase tracking-widest"
+  }, "Page ", currentPage, " / ", totalPages), React.createElement("button", {
+    disabled: currentPage >= totalPages,
+    onClick: () => {
+      setCurrentPage(p => p + 1);
+      window.scrollTo(0, 0);
+    },
+    className: "p-2 disabled:opacity-20 text-indigo-600"
+  }, React.createElement(Icon, {
+    name: "chevron-right"
+  })));
+  if (loading) return React.createElement("div", {
+    className: "min-h-screen flex flex-col items-center justify-center bg-white gap-4"
+  }, React.createElement("div", {
+    className: "animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"
+  }), React.createElement("p", {
+    className: "whimsical-font text-slate-400 font-bold uppercase text-[10px] tracking-widest"
+  }, "DIAC HUB LOADING..."));
+  if (!isAuthenticated) return React.createElement("div", {
+    className: "min-h-screen flex items-center justify-center p-6 bg-transparent relative z-10"
+  }, React.createElement("div", {
+    className: "w-full max-w-sm space-y-6 animate-fade-in bg-white/80 backdrop-blur-xl p-8 rounded-3xl shadow-xl border border-white/50"
+  }, React.createElement("div", {
+    className: "text-center"
+  }, React.createElement("img", {
+    src: APP_LOGO_URL,
+    className: "w-20 mx-auto mb-4"
+  }), React.createElement("h1", {
+    className: "text-3xl font-black text-indigo-600 whimsical-font italic uppercase text-center"
+  }, "DIAC HUB")), React.createElement("div", {
+    className: "space-y-4 pt-4"
+  }, React.createElement("p", {
+    className: "text-xs text-slate-500 font-medium text-center"
+  }, "Secure single sign-on access. Please use your official school board Google credentials to verify."), React.createElement("div", {
+    className: "pt-2"
+  }, React.createElement("button", {
+    onClick: handleSignInClick,
+    disabled: !tokenClient || isLoggingIn,
+    className: "w-full flex items-center justify-center gap-3 bg-white border border-slate-200 hover:bg-slate-50 disabled:opacity-50 text-slate-700 font-bold text-sm py-3.5 rounded-2xl shadow-sm transition-colors"
+  }, React.createElement(GoogleIcon, null), isLoggingIn ? 'Verifying credentials...' : 'Sign in with Google')), authError && React.createElement("p", {
+    className: "text-rose-500 text-xs font-bold text-center px-2"
+  }, authError))));
+  const HOC_STATUS_PRIORITY = {
+    'Absent - Unknown': 0,
+    'Late': 1,
+    'Absent - Excused': 2
+  };
+  const activeHocAbsences = absences.filter(a => String(a.session) === String(hocSession) && new Date(a.timestamp).toDateString() === new Date().toDateString() && a.status !== 'Present').sort((a, b) => (HOC_STATUS_PRIORITY[a.status] ?? 99) - (HOC_STATUS_PRIORITY[b.status] ?? 99));
+  const submittedActivitiesThisSession = new Set(absences.filter(a => String(a.session) === String(hocSession) && new Date(a.timestamp).toDateString() === new Date().toDateString()).map(a => a.activity));
+  const missingAttendanceClasses = (classes[`S${hocSession}`] || []).filter(c => !submittedActivitiesThisSession.has(c));
+  const recentReportsList = [...absences].filter(a => a.status !== 'Present').reverse().slice(0, 10);
+  if (selectedStudent) return React.createElement("div", {
+    className: "min-h-screen bg-transparent animate-fade-in pb-12"
+  }, React.createElement("header", {
+    className: "bg-slate-900/90 backdrop-blur-md text-white p-5 sticky top-0 z-50 flex items-center gap-4"
+  }, React.createElement("button", {
+    onClick: () => setSelectedStudent(null),
+    className: "p-2"
+  }, React.createElement(Icon, {
+    name: "arrow-left"
+  })), React.createElement("h1", {
+    className: "text-lg font-bold truncate whimsical-font"
+  }, selectedStudent.preferredName)), React.createElement("div", {
+    className: "p-4 max-w-2xl mx-auto space-y-4"
+  }, React.createElement("div", {
+    className: "bg-white/80 backdrop-blur-md p-6 rounded-[2.5rem] shadow-sm border border-white text-center"
+  }, React.createElement("div", {
+    className: "w-28 h-28 rounded-[2rem] overflow-hidden shadow-inner mx-auto bg-slate-100 flex items-center justify-center border-4 border-white mb-4"
+  }, selectedStudent.photo ? React.createElement("img", {
+    src: getDirectDriveUrl(selectedStudent.photo),
+    className: "w-full h-full object-cover"
+  }) : React.createElement(Icon, {
+    name: "user",
+    size: 40,
+    className: "text-slate-300"
+  })), React.createElement("h2", {
+    className: "text-2xl font-black text-slate-800 leading-tight"
+  }, selectedStudent.preferredName), React.createElement("div", {
+    className: "flex flex-wrap justify-center gap-2 mt-3"
+  }, React.createElement("span", {
+    className: "px-3 py-1 bg-indigo-50 text-indigo-600 rounded-full text-[10px] font-black uppercase"
+  }, selectedStudent.pronouns), React.createElement("span", {
+    className: "px-3 py-1 bg-slate-900 text-white rounded-full text-[10px] font-black uppercase"
+  }, selectedStudent.cabin), React.createElement("span", {
+    className: "px-3 py-1 bg-slate-100 text-slate-500 rounded-full text-[10px] font-black uppercase"
+  }, selectedStudent.grade))), React.createElement("div", {
+    className: "grid gap-3"
+  }, React.createElement(DetailRow, {
+    label: "School",
+    value: selectedStudent.school,
+    icon: "school"
+  }), React.createElement(DetailRow, {
+    label: "Birth Date",
+    value: selectedStudent.birthDate,
+    icon: "calendar"
+  }), React.createElement(DetailRow, {
+    label: "Dietary Restrictions",
+    value: selectedStudent.dietary,
+    icon: "utensils"
+  }), React.createElement(DetailRow, {
+    label: "Allergies",
+    value: selectedStudent.allergies,
+    icon: "alert-circle"
+  }), React.createElement("div", {
+    className: "px-4 py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest mt-2"
+  }, "Guardian Contact"), React.createElement(DetailRow, {
+    label: "Guardian",
+    value: `${selectedStudent.guardianFirstName} ${selectedStudent.guardianLastName}`,
+    icon: "users"
+  }), React.createElement(DetailRow, {
+    label: "Phone",
+    value: selectedStudent.guardianPhone,
+    icon: "phone"
+  }), React.createElement(DetailRow, {
+    label: "Guardian Email",
+    value: selectedStudent.guardianEmail,
+    icon: "mail"
+  }), React.createElement(DetailRow, {
+    label: "Preferred Email",
+    value: selectedStudent.preferredEmail,
+    icon: "at-sign"
+  }), React.createElement("div", {
+    className: "px-4 py-2 text-[10px] font-black text-slate-400 uppercase tracking-widest mt-2"
+  }, "Activity Schedule"), React.createElement(DetailRow, {
+    label: "Session 1",
+    value: `${selectedStudent.s1Activity} @ ${selectedStudent.s1Venue}`,
+    icon: "star"
+  }), React.createElement(DetailRow, {
+    label: "Session 2",
+    value: `${selectedStudent.s2Activity} @ ${selectedStudent.s2Venue}`,
+    icon: "star"
+  }), React.createElement(DetailRow, {
+    label: "Session 3",
+    value: `${selectedStudent.s3Activity} @ ${selectedStudent.s3Venue}`,
+    icon: "star"
+  }), React.createElement(DetailRow, {
+    label: "Session 4",
+    value: `${selectedStudent.s4Activity} @ ${selectedStudent.s4Venue}`,
+    icon: "star"
+  }))));
+  return React.createElement("div", {
+    className: "min-h-screen bg-transparent pb-24"
+  }, React.createElement("header", {
+    className: "bg-slate-900/90 backdrop-blur-md text-white p-5 sticky top-0 z-50 flex justify-between items-center"
+  }, React.createElement("h1", {
+    className: "text-xl font-black whimsical-font italic tracking-tighter"
+  }, "DIAC HUB"), React.createElement("button", {
+    onClick: fetchData,
+    className: `p-2 bg-slate-800 rounded-xl ${refreshing ? 'animate-spin' : ''}`
+  }, React.createElement(Icon, {
+    name: "refresh-cw",
+    size: 18
+  }))), React.createElement("main", {
+    className: "p-4 max-w-xl mx-auto space-y-4"
+  }, fetchError && React.createElement("div", {
+    className: "bg-rose-50 border border-rose-200 text-rose-600 text-xs font-bold p-3 rounded-2xl flex items-center gap-2 animate-fade-in"
+  }, React.createElement(Icon, {
+    name: "alert-triangle",
+    size: 16
+  }), React.createElement("span", null, fetchError)), lastUpdated && !fetchError && React.createElement("div", {
+    className: "text-center text-[9px] font-bold text-slate-400 uppercase tracking-widest"
+  }, "Updated ", lastUpdated), React.createElement("nav", {
+    className: "grid grid-cols-4 gap-1 bg-white/70 backdrop-blur-md p-1 rounded-2xl shadow-sm border border-white"
+  }, ['students', 'attendance', 'hoc', 'schedule', 'massage', 'duty', 'map', 'housing', 'staffFinder', 'cabins', 'emergency', 'venues', 'photos', 'diacSong', 'campFire'].map(tab => (tab !== 'hoc' || isHoc) && React.createElement("button", {
+    key: tab,
+    onClick: () => setActiveTab(tab),
+    className: `py-3 px-1 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === tab ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400'}`
+  }, TAB_LABELS[tab] || tab))), activeTab === 'students' && React.createElement("div", {
+    className: "space-y-4 animate-fade-in"
+  }, React.createElement("div", {
+    className: "relative"
+  }, React.createElement(Icon, {
+    name: "search",
+    size: 18,
+    className: "absolute left-4 top-1/2 -translate-y-1/2 text-slate-300"
+  }), React.createElement("input", {
+    type: "text",
+    placeholder: "Search Artists...",
+    className: "w-full bg-white/70 backdrop-blur-sm border border-white p-4 pl-12 rounded-3xl shadow-sm outline-none font-medium text-sm",
+    value: searchQuery,
+    onChange: e => {
+      setSearchQuery(e.target.value);
+      setCurrentPage(1);
+    }
+  })), React.createElement(Pagination, {
+    pos: "top"
+  }), React.createElement("div", {
+    className: "grid gap-2"
+  }, pagedStudents.map((s, idx) => React.createElement("button", {
+    key: idx,
+    onClick: () => setSelectedStudent(s),
+    className: "bg-white/60 backdrop-blur-sm p-4 rounded-2xl border border-white flex items-center justify-between w-full shadow-sm text-left"
+  }, React.createElement("div", {
+    className: "flex items-center gap-4"
+  }, React.createElement("div", {
+    className: "w-12 h-12 rounded-2xl bg-slate-50 flex items-center justify-center border border-slate-100 overflow-hidden shadow-sm"
+  }, s.photo ? React.createElement("img", {
+    src: getDirectDriveUrl(s.photo),
+    className: "w-full h-full object-cover"
+  }) : React.createElement(Icon, {
+    name: "user",
+    className: "text-slate-200",
+    size: 20
+  })), React.createElement("div", null, React.createElement("div", {
+    className: "font-bold text-slate-900 text-sm leading-tight"
+  }, s.preferredName), React.createElement("div", {
+    className: "text-[9px] text-slate-400 font-bold uppercase mt-0.5"
+  }, s.cabin))), React.createElement(Icon, {
+    name: "chevron-right",
+    size: 16,
+    className: "text-slate-200"
+  })))), React.createElement(Pagination, {
+    pos: "bottom"
+  })), activeTab === 'attendance' && React.createElement("div", {
+    className: "space-y-4 animate-fade-in"
+  }, React.createElement("div", {
+    className: "bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm space-y-4"
+  }, React.createElement("div", {
+    className: "flex gap-2"
+  }, [1, 2, 3, 4].map(num => React.createElement("button", {
+    key: num,
+    onClick: () => {
+      setAttSession(num.toString());
+      setAttActivity('');
+      setAttSessionAuto(false);
+    },
+    className: `flex-1 py-3 rounded-xl text-[10px] font-black border transition-all ${attSession === num.toString() ? 'bg-indigo-600 border-indigo-600 text-white shadow-md' : 'bg-slate-50 border-slate-100 text-slate-400'}`
+  }, "S", num))), React.createElement("div", {
+    className: "relative"
+  }, React.createElement("select", {
+    className: "w-full bg-white border border-slate-100 p-4 rounded-2xl text-sm outline-none font-bold text-slate-600",
+    value: attActivity,
+    onChange: e => setAttActivity(e.target.value)
+  }, React.createElement("option", {
+    value: ""
+  }, "Choose Activity"), (classes[`S${attSession}`] || []).map((c, i) => React.createElement("option", {
+    key: i,
+    value: c
+  }, c))))), attActivity && React.createElement("div", {
+    className: "space-y-4"
+  }, React.createElement("button", {
+    disabled: isSubmitting || !hasUnsavedChanges,
+    onClick: handleSubmitAttendance,
+    className: `w-full font-black py-4 rounded-2xl shadow-lg flex items-center justify-center gap-2 sticky top-24 z-40 animate-fade-in ${hasUnsavedChanges ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-400 opacity-50'}`
+  }, React.createElement(Icon, {
+    name: isSubmitting ? "loader" : "save",
+    className: isSubmitting ? "animate-spin" : ""
+  }), isSubmitting ? 'SYNCING...' : 'SUBMIT ATTENDANCE'), submitError && React.createElement("div", {
+    className: "bg-rose-50 border border-rose-200 text-rose-600 text-xs font-bold p-3 rounded-2xl flex items-center gap-2 animate-fade-in"
+  }, React.createElement(Icon, {
+    name: "alert-triangle",
+    size: 16
+  }), React.createElement("span", null, submitError)), React.createElement("div", {
+    className: "space-y-3"
+  }, enrolledInCurrent.map((s, i) => {
+    const name = s.displayName;
+    const key = `${name}-${attSession}-${attActivity}`;
+    const currentStatus = localAttendance[key] || DEFAULT_STATUS;
+    const today = new Date().toDateString();
+    const serverAbsence = absences.find(a => a.studentName === name && String(a.session) === String(attSession) && a.activity === attActivity && new Date(a.timestamp).toDateString() === today);
+    const serverStatus = serverAbsence ? serverAbsence.status : 'Not Completed';
+    const isSyncing = isSubmitting && currentStatus !== serverStatus;
+    const options = [{
+      label: 'Present',
+      val: 'Present',
+      color: 'bg-emerald-500 text-white border-emerald-500'
+    }, {
+      label: 'Absent',
+      val: 'Absent - Unknown',
+      color: 'bg-rose-500 text-white border-rose-500'
+    }, {
+      label: 'Excused',
+      val: 'Absent - Excused',
+      color: 'bg-amber-500 text-white border-amber-500'
+    }, {
+      label: 'Late',
+      val: 'Late',
+      color: 'bg-indigo-500 text-white border-indigo-500'
+    }];
+    return React.createElement("div", {
+      key: i,
+      className: `bg-white/80 backdrop-blur-sm p-4 rounded-3xl border shadow-sm transition-all ${currentStatus !== 'Present' ? 'border-amber-200' : 'border-slate-100'}`
+    }, React.createElement("div", {
+      className: "font-bold text-slate-800 text-sm mb-3 px-1"
+    }, name), React.createElement("div", {
+      className: "grid grid-cols-4 gap-1.5"
+    }, isSyncing ? React.createElement("div", {
+      className: "col-span-4 py-3 rounded-xl text-[10px] font-black uppercase text-center bg-slate-50 text-slate-400 animate-pulse"
+    }, "Syncing...") : options.map(opt => React.createElement("button", {
+      key: opt.val,
+      onClick: () => stageStatusChange(name, currentStatus === opt.val ? DEFAULT_STATUS : opt.val),
+      className: `py-2.5 rounded-xl text-[9px] font-black uppercase border transition-all ${currentStatus === opt.val ? opt.color : 'bg-slate-50 border-slate-100 text-slate-400'}`
+    }, opt.label))));
+  })))), activeTab === 'hoc' && React.createElement("div", {
+    className: "space-y-4 animate-fade-in"
+  }, React.createElement("div", {
+    className: "bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm"
+  }, React.createElement("h2", {
+    className: "text-xl font-black text-slate-800 mb-4 whimsical-font italic"
+  }, "HOC Review"), React.createElement("div", {
+    className: "flex gap-2 mb-2 overflow-x-auto no-scrollbar"
+  }, [1, 2, 3, 4].map(num => React.createElement("button", {
+    key: num,
+    onClick: () => setHocSession(num.toString()),
+    className: `flex-1 min-w-[60px] py-2 rounded-xl text-[10px] font-black border transition-all ${hocSession === num.toString() ? 'bg-indigo-600 border-indigo-600 text-white shadow-md' : 'bg-slate-50 border-slate-100 text-slate-400'}`
+  }, "S", num)))), missingAttendanceClasses.length > 0 && React.createElement("div", {
+    className: "bg-amber-50 border border-amber-200 rounded-[2rem] p-5 animate-fade-in"
+  }, React.createElement("div", {
+    className: "flex items-center gap-2 mb-2"
+  }, React.createElement(Icon, {
+    name: "alert-triangle",
+    size: 16,
+    className: "text-amber-600"
+  }), React.createElement("h3", {
+    className: "text-xs font-black text-amber-700 uppercase tracking-widest"
+  }, "Attendance Not Yet Submitted — S", hocSession)), React.createElement("div", {
+    className: "flex flex-wrap gap-2"
+  }, missingAttendanceClasses.map((c, i) => React.createElement("span", {
+    key: i,
+    className: "px-3 py-1.5 bg-white/80 text-amber-700 rounded-full text-xs font-bold border border-amber-200"
+  }, c)))), React.createElement("div", {
+    className: "space-y-3"
+  }, activeHocAbsences.map((a, i) => {
+    const currentNote = hocNotes[a.id] !== undefined ? hocNotes[a.id] : a.note || a.Note || a.Notes || a.notes || "";
+    const badgeClass = a.status === 'Absent - Excused' ? 'bg-amber-50 text-amber-600' : a.status === 'Late' ? 'bg-indigo-50 text-indigo-600' : 'bg-rose-50 text-rose-600';
+    return React.createElement("div", {
+      key: a.id || i,
+      className: "bg-white/80 backdrop-blur-sm p-4 rounded-3xl shadow-sm border border-slate-100"
+    }, React.createElement("div", {
+      className: "flex justify-between items-start mb-3"
+    }, React.createElement("div", null, React.createElement("div", {
+      className: "font-bold text-slate-800"
+    }, a.studentName), React.createElement("div", {
+      className: "text-[9px] text-slate-400 font-bold uppercase mt-1"
+    }, a.cabin, " • ", a.activity)), React.createElement("div", {
+      className: "text-right"
+    }, React.createElement("div", {
+      className: `text-[9px] font-black px-2 py-1 rounded-lg uppercase ${badgeClass}`
+    }, a.status), React.createElement("div", {
+      className: "text-[8px] text-slate-400 mt-1 uppercase"
+    }, "Rep: ", a.reportedBy))), React.createElement("div", {
+      className: "mb-3"
+    }, React.createElement("input", {
+      type: "text",
+      placeholder: "Add a note... (e.g. 'At nurse's station')",
+      value: currentNote,
+      onChange: e => handleNoteChange(a.id, e.target.value),
+      className: "w-full text-xs font-medium p-2.5 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:border-indigo-300 text-slate-600 placeholder-slate-400 transition-colors"
+    })), React.createElement("div", {
+      className: "grid grid-cols-2 gap-2"
+    }, hocSyncingId === a.id ? React.createElement("div", {
+      className: "col-span-2 py-2.5 rounded-xl text-[10px] font-black uppercase text-center bg-slate-50 text-slate-400 animate-pulse"
+    }, "Syncing...") : React.createElement(React.Fragment, null, React.createElement("button", {
+      onClick: () => handleHocUpdate(a.studentName, a, 'Late', currentNote),
+      className: `py-2.5 rounded-xl text-[10px] font-black uppercase border transition-all ${a.status === 'Late' ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-100 bg-slate-50 text-indigo-600 hover:bg-indigo-50'}`
+    }, "Late"), React.createElement("button", {
+      onClick: () => handleHocUpdate(a.studentName, a, 'Absent - Excused', currentNote),
+      className: `py-2.5 rounded-xl text-[10px] font-black uppercase border transition-all ${a.status === 'Absent - Excused' ? 'bg-amber-500 border-amber-500 text-white' : 'bg-slate-50 border-slate-100 text-amber-600 hover:bg-amber-50'}`
+    }, "Excused"))));
+  }), activeHocAbsences.length === 0 && React.createElement("p", {
+    className: "text-center py-8 text-slate-400 text-xs font-bold italic"
+  }, "No active absences for Session ", hocSession, " today")), React.createElement("div", {
+    className: "mt-8"
+  }, React.createElement("h3", {
+    className: "text-sm font-black text-slate-800 uppercase tracking-widest mb-4 px-2"
+  }, "Recent Absence Reports"), React.createElement("div", {
+    className: "space-y-3"
+  }, recentReportsList.length > 0 ? recentReportsList.map((a, i) => React.createElement("div", {
+    key: i,
+    className: "flex justify-between items-center p-3 bg-white/70 backdrop-blur-sm rounded-2xl text-xs border border-white shadow-sm"
+  }, React.createElement("div", null, React.createElement("span", {
+    className: "font-bold text-slate-800"
+  }, a.studentName), React.createElement("p", {
+    className: "text-[9px] text-slate-400 font-bold mt-1"
+  }, "Session ", a.session, " • ", a.activity), (a.note || a.Note || a.notes || a.Notes) && React.createElement("p", {
+    className: "text-[9px] text-slate-500 italic mt-1 bg-slate-50 px-2 py-1 rounded inline-block"
+  }, a.note || a.Note || a.notes || a.Notes)), React.createElement("div", {
+    className: "text-[9px] font-black text-rose-500 bg-rose-50 px-2 py-1 rounded-lg uppercase whitespace-nowrap"
+  }, a.status))) : React.createElement("p", {
+    className: "text-center py-8 text-slate-400 text-xs font-bold italic"
+  }, "No recent absence reports")))), activeTab === 'schedule' && React.createElement("div", {
+    className: "space-y-4 animate-fade-in"
+  }, React.createElement("div", {
+    className: "bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm overflow-hidden"
+  }, React.createElement("h2", {
+    className: "text-xl font-black text-slate-800 mb-4 whimsical-font italic"
+  }, "Daily Master"), React.createElement("div", {
+    className: "overflow-x-auto"
+  }, React.createElement("table", {
+    className: "w-full text-left min-w-[400px]"
+  }, React.createElement("thead", null, React.createElement("tr", {
+    className: "border-b border-slate-200"
+  }, React.createElement("th", {
+    className: "p-3 text-[10px] font-black text-slate-400 uppercase tracking-widest"
+  }, "Time"), React.createElement("th", {
+    className: "p-3 text-[10px] font-black text-slate-400 uppercase tracking-widest"
+  }, "Activity"), React.createElement("th", {
+    className: "p-3 text-[10px] font-black text-slate-400 uppercase tracking-widest"
+  }, "Location"))), React.createElement("tbody", null, schedule.map((row, i) => React.createElement("tr", {
+    key: i,
+    className: "border-b border-slate-50 hover:bg-slate-50/50"
+  }, React.createElement("td", {
+    className: "p-3 text-xs font-bold text-indigo-600"
+  }, row['Time:']), React.createElement("td", {
+    className: "p-3 text-xs font-bold text-slate-700"
+  }, row['Activity:']), React.createElement("td", {
+    className: "p-3 text-xs text-slate-500 italic"
+  }, row['Location:'])))))))), activeTab === 'massage' && React.createElement("div", {
+    className: "space-y-4 animate-fade-in"
+  }, React.createElement("div", {
+    className: "bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm"
+  }, React.createElement("h2", {
+    className: "text-xl font-black text-slate-800 mb-1 whimsical-font italic"
+  }, "Massage Appointments"), React.createElement("p", {
+    className: "text-xs text-slate-400 font-medium"
+  }, "On-site massage therapist schedule for the week.")), groupedMassage.length > 0 ? groupedMassage.map(group => React.createElement("div", {
+    key: group.day,
+    className: "bg-white/70 backdrop-blur-md rounded-[2rem] border border-white shadow-sm overflow-hidden"
+  }, React.createElement("div", {
+    className: "px-6 py-3 bg-slate-900/90 text-white"
+  }, React.createElement("h3", {
+    className: "text-xs font-black uppercase tracking-widest"
+  }, group.day)), React.createElement("div", {
+    className: "divide-y divide-slate-100"
+  }, group.entries.map((entry, ei) => React.createElement("div", {
+    key: group.day + '|' + entry.time + '|' + ei,
+    className: "flex items-center justify-between px-6 py-3"
+  }, React.createElement("span", {
+    className: "text-sm font-bold text-slate-800"
+  }, entry.name || 'Open slot'), React.createElement("span", {
+    className: "text-[10px] font-black text-indigo-600 uppercase tracking-widest"
+  }, entry.time)))))) : React.createElement("p", {
+    className: "text-center py-8 text-slate-400 text-xs font-bold italic"
+  }, "No massage appointments scheduled")), activeTab === 'duty' && React.createElement("div", {
+    className: "space-y-4 animate-fade-in"
+  }, React.createElement("div", {
+    className: "bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm"
+  }, React.createElement("h2", {
+    className: "text-xl font-black text-slate-800 mb-1 whimsical-font italic"
+  }, "Duty Roster"), React.createElement("p", {
+    className: "text-xs text-slate-400 font-medium"
+  }, "Luggage truck, night walks, and free-time supervision assignments for the week.")), React.createElement("div", {
+    className: "relative"
+  }, React.createElement(Icon, {
+    name: "search",
+    size: 18,
+    className: "absolute left-4 top-1/2 -translate-y-1/2 text-slate-300"
+  }), React.createElement("input", {
+    type: "text",
+    placeholder: "Search by name...",
+    className: "w-full bg-white/70 backdrop-blur-sm border border-white p-4 pl-12 pr-12 rounded-3xl shadow-sm outline-none font-medium text-sm",
+    value: dutySearchQuery,
+    onChange: e => setDutySearchQuery(e.target.value)
+  }), dutySearchQuery && React.createElement("button", {
+    onClick: () => setDutySearchQuery(''),
+    className: "absolute right-4 top-1/2 -translate-y-1/2 text-slate-300"
+  }, React.createElement(Icon, {
+    name: "x",
+    size: 18
+  }))), groupedDuty.length > 0 ? groupedDuty.map(group => React.createElement("div", {
+    key: group.day,
+    className: "bg-white/70 backdrop-blur-md rounded-[2rem] border border-white shadow-sm overflow-hidden"
+  }, React.createElement("div", {
+    className: "px-6 py-3 bg-slate-900/90 text-white"
+  }, React.createElement("h3", {
+    className: "text-xs font-black uppercase tracking-widest"
+  }, group.day)), React.createElement("div", {
+    className: "divide-y divide-slate-100"
+  }, group.entries.map((entry, ei) => React.createElement("div", {
+    key: group.day + '|' + entry.duty + '|' + entry.where + '|' + ei,
+    className: "px-6 py-3"
+  }, React.createElement("div", {
+    className: "flex items-center justify-between"
+  }, React.createElement("span", {
+    className: "text-sm font-bold text-slate-800"
+  }, entry.duty), React.createElement("span", {
+    className: "text-[10px] font-black text-indigo-600 uppercase tracking-widest"
+  }, entry.time)), React.createElement("div", {
+    className: "text-[9px] text-slate-400 font-bold uppercase mt-1"
+  }, entry.where), React.createElement("div", {
+    className: "flex flex-wrap gap-3 mt-2"
+  }, (Array.isArray(entry.who) ? entry.who : [entry.who]).filter(Boolean).map((name, ni) => React.createElement("div", {
+    key: name + ni,
+    className: "flex items-center gap-1.5"
+  }, React.createElement(StaffAvatar, {
+    name: name,
+    size: 22
+  }), React.createElement("span", {
+    className: "text-xs text-slate-600 font-medium"
+  }, name))))))))) : React.createElement("p", {
+    className: "text-center py-8 text-slate-400 text-xs font-bold italic"
+  }, dutySearchQuery ? `No duty assignments found for "${dutySearchQuery}"` : 'No duty assignments scheduled')), activeTab === 'map' && React.createElement("div", {
+    className: "space-y-4 animate-fade-in"
+  }, React.createElement("div", {
+    className: "bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm"
+  }, React.createElement("h2", {
+    className: "text-xl font-black text-slate-800 mb-1 whimsical-font italic"
+  }, "Camp Map"), React.createElement("p", {
+    className: "text-xs text-slate-400 font-medium"
+  }, "Tap the map to open it full-screen and zoom in.")), React.createElement("a", {
+    href: CAMP_MAP_FULLSCREEN_URL,
+    target: "_blank",
+    rel: "noopener noreferrer",
+    className: "block bg-white/70 backdrop-blur-md rounded-[2rem] border border-white shadow-sm overflow-hidden"
+  }, React.createElement("img", {
+    src: CAMP_MAP_IMAGE_URL,
+    alt: "Camp property map",
+    className: "w-full h-auto block"
+  })), React.createElement("a", {
+    href: CAMP_MAP_FULLSCREEN_URL,
+    target: "_blank",
+    rel: "noopener noreferrer",
+    className: "w-full flex items-center justify-center gap-2 bg-indigo-600 text-white font-black text-xs uppercase tracking-widest py-3.5 rounded-2xl shadow-sm"
+  }, React.createElement(Icon, {
+    name: "maximize-2",
+    size: 16
+  }), "Open Full-Screen")), activeTab === 'housing' && React.createElement("div", {
+    className: "space-y-4 animate-fade-in"
+  }, React.createElement("div", {
+    className: "bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm"
+  }, React.createElement("h2", {
+    className: "text-xl font-black text-slate-800 mb-1 whimsical-font italic"
+  }, "Staff Housing"), React.createElement("p", {
+    className: "text-xs text-slate-400 font-medium"
+  }, "Cabin and room assignments for staff this week.")), groupedHousing.length > 0 ? groupedHousing.map((group, gi) => React.createElement("div", {
+    key: gi,
+    className: "bg-white/70 backdrop-blur-md rounded-[2rem] border border-white shadow-sm overflow-hidden"
+  }, React.createElement("div", {
+    className: "px-6 py-3 bg-slate-900/90 text-white flex items-center gap-2"
+  }, React.createElement(Icon, {
+    name: "home",
+    size: 14
+  }), React.createElement("h3", {
+    className: "text-xs font-black uppercase tracking-widest"
+  }, group.location)), React.createElement("div", {
+    className: "overflow-x-auto"
+  }, React.createElement("table", {
+    className: "w-full text-left min-w-[320px]"
+  }, React.createElement("thead", null, React.createElement("tr", {
+    className: "border-b border-slate-100"
+  }, React.createElement("th", {
+    className: "p-3 text-[10px] font-black text-slate-400 uppercase tracking-widest w-24"
+  }, "Room"), React.createElement("th", {
+    className: "p-3 text-[10px] font-black text-slate-400 uppercase tracking-widest"
+  }, "Staff"))), React.createElement("tbody", null, group.rooms.map((r, ri) => React.createElement("tr", {
+    key: ri,
+    className: "border-b border-slate-50 last:border-0 hover:bg-slate-50/50"
+  }, React.createElement("td", {
+    className: "p-3 text-xs font-bold text-indigo-600 align-top whitespace-nowrap"
+  }, r.room), React.createElement("td", {
+    className: "p-3 text-xs text-slate-700 font-medium"
+  }, r.staff.length > 0 ? React.createElement("div", {
+    className: "flex flex-wrap gap-3"
+  }, r.staff.map((name, ni) => React.createElement("div", {
+    key: ni,
+    className: "flex items-center gap-1.5"
+  }, React.createElement(StaffAvatar, {
+    name: name,
+    size: 22
+  }), React.createElement("span", null, name)))) : React.createElement("span", {
+    className: "text-slate-300 italic"
+  }, "Unassigned"))))))))) : React.createElement("p", {
+    className: "text-center py-8 text-slate-400 text-xs font-bold italic"
+  }, "No housing assignments available")), activeTab === 'cabins' && React.createElement("div", {
+    className: "space-y-4 animate-fade-in"
+  }, React.createElement("div", {
+    className: "bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm"
+  }, React.createElement("h2", {
+    className: "text-xl font-black text-slate-800 mb-1 whimsical-font italic"
+  }, "Cabins"), React.createElement("p", {
+    className: "text-xs text-slate-400 font-medium"
+  }, "Tap a cabin to see who's assigned to it this week.")), cabins.length > 0 ? React.createElement("div", {
+    className: "bg-white/70 backdrop-blur-md rounded-[2rem] border border-white shadow-sm overflow-hidden divide-y divide-slate-50"
+  }, cabins.map((cabin, ci) => {
+    const isOpen = selectedCabinIndex === ci;
+    return React.createElement("div", {
+      key: ci
+    }, React.createElement("button", {
+      onClick: () => setSelectedCabinIndex(isOpen ? null : ci),
+      className: "w-full flex items-center justify-between gap-3 px-6 py-4 text-left hover:bg-slate-50/50"
+    }, React.createElement("div", {
+      className: "flex items-center gap-2.5"
+    }, React.createElement(Icon, {
+      name: "home",
+      size: 16,
+      className: "text-indigo-400"
+    }), React.createElement("span", {
+      className: "text-sm font-black text-slate-800"
+    }, cabin.name)), React.createElement("div", {
+      className: "flex items-center gap-2"
+    }, React.createElement("span", {
+      className: "text-[10px] font-bold text-slate-400 uppercase tracking-widest"
+    }, cabin.students.length, " ", cabin.students.length === 1 ? 'artist' : 'artists'), React.createElement(Icon, {
+      name: isOpen ? 'chevron-up' : 'chevron-down',
+      size: 16,
+      className: "text-slate-300"
+    }))), isOpen && React.createElement("div", {
+      className: "px-6 pb-4 animate-fade-in"
+    }, cabin.students.length > 0 ? React.createElement("div", {
+      className: "flex flex-wrap gap-2"
+    }, cabin.students.map((name, ni) => {
+      const student = findStudentByName(name);
+      return student ? React.createElement("button", {
+        key: ni,
+        onClick: () => setSelectedStudent(student),
+        className: "text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-full px-3 py-1.5 flex items-center gap-1 hover:bg-indigo-100"
+      }, name, React.createElement(Icon, {
+        name: "chevron-right",
+        size: 12
+      })) : React.createElement("span", {
+        key: ni,
+        className: "text-xs font-bold text-slate-700 bg-slate-50 border border-slate-100 rounded-full px-3 py-1.5"
+      }, name);
+    })) : React.createElement("p", {
+      className: "text-xs text-slate-300 italic font-medium"
+    }, "No students listed for this cabin.")));
+  })) : React.createElement("p", {
+    className: "text-center py-8 text-slate-400 text-xs font-bold italic"
+  }, "No cabin assignments available")), activeTab === 'emergency' && React.createElement("div", {
+    className: "space-y-4 animate-fade-in"
+  }, React.createElement("div", {
+    className: "bg-rose-600 text-white p-6 rounded-[2rem] shadow-sm"
+  }, React.createElement("h2", {
+    className: "text-xl font-black mb-1 whimsical-font italic"
+  }, emergencyData.title || 'Emergency Procedures'), React.createElement("p", {
+    className: "text-xs text-rose-100 font-medium"
+  }, "Zone assignments and emergency response procedures.")), emergencyData.zones.length > 0 && React.createElement("div", {
+    className: "bg-white/70 backdrop-blur-md rounded-[2rem] border border-white shadow-sm overflow-hidden"
+  }, React.createElement("div", {
+    className: "px-6 py-3 bg-slate-900/90 text-white flex items-center gap-2"
+  }, React.createElement(Icon, {
+    name: "map-pin",
+    size: 14
+  }), React.createElement("h3", {
+    className: "text-xs font-black uppercase tracking-widest"
+  }, "Zone Assignments")), React.createElement("div", {
+    className: "overflow-x-auto"
+  }, React.createElement("table", {
+    className: "w-full text-left min-w-[420px]"
+  }, React.createElement("thead", null, React.createElement("tr", {
+    className: "border-b border-slate-100"
+  }, React.createElement("th", {
+    className: "p-3 text-[10px] font-black text-slate-400 uppercase tracking-widest w-28"
+  }, "Area"), React.createElement("th", {
+    className: "p-3 text-[10px] font-black text-slate-400 uppercase tracking-widest"
+  }, "Location"), React.createElement("th", {
+    className: "p-3 text-[10px] font-black text-slate-400 uppercase tracking-widest"
+  }, "Staff"))), React.createElement("tbody", null, emergencyData.zones.map((z, zi) => React.createElement("tr", {
+    key: zi,
+    className: "border-b border-slate-50 last:border-0 hover:bg-slate-50/50"
+  }, React.createElement("td", {
+    className: "p-3 text-xs font-bold text-indigo-600 align-top whitespace-nowrap"
+  }, z.area || '—'), React.createElement("td", {
+    className: "p-3 text-xs text-slate-700 font-medium align-top"
+  }, z.location), React.createElement("td", {
+    className: "p-3 text-xs text-slate-700 font-medium align-top"
+  }, z.staff))))))), emergencyData.notes.length > 0 && React.createElement("div", {
+    className: "bg-white/70 backdrop-blur-md rounded-[2rem] border border-white shadow-sm overflow-hidden divide-y divide-slate-50"
+  }, emergencyData.notes.map((n, ni) => n.label ? React.createElement("div", {
+    key: ni,
+    className: "px-6 py-4"
+  }, React.createElement("div", {
+    className: "text-[10px] font-black text-rose-500 uppercase tracking-widest mb-1"
+  }, n.label), React.createElement("div", {
+    className: "text-xs text-slate-700 font-medium leading-relaxed"
+  }, n.text)) : React.createElement("div", {
+    key: ni,
+    className: "px-6 py-3 bg-slate-900/90 text-white text-center"
+  }, React.createElement("div", {
+    className: "text-xs font-black"
+  }, n.text)))), emergencyData.zones.length === 0 && emergencyData.notes.length === 0 && React.createElement("p", {
+    className: "text-center py-8 text-slate-400 text-xs font-bold italic"
+  }, "No emergency procedures available")), activeTab === 'venues' && React.createElement("div", {
+    className: "space-y-4 animate-fade-in"
+  }, React.createElement("div", {
+    className: "bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm"
+  }, React.createElement("h2", {
+    className: "text-xl font-black text-slate-800 mb-1 whimsical-font italic"
+  }, "Venues"), React.createElement("p", {
+    className: "text-xs text-slate-400 font-medium"
+  }, "What's running where, period by period.")), React.createElement("div", {
+    className: "relative"
+  }, React.createElement(Icon, {
+    name: "search",
+    size: 18,
+    className: "absolute left-4 top-1/2 -translate-y-1/2 text-slate-300"
+  }), React.createElement("input", {
+    type: "text",
+    placeholder: "Search venue or activity...",
+    className: "w-full bg-white/70 backdrop-blur-sm border border-white p-4 pl-12 rounded-3xl shadow-sm outline-none font-medium text-sm",
+    value: venueSearchQuery,
+    onChange: e => setVenueSearchQuery(e.target.value)
+  })), filteredVenues.length > 0 ? React.createElement("div", {
+    className: "bg-white/70 backdrop-blur-md rounded-[2rem] border border-white shadow-sm overflow-hidden"
+  }, React.createElement("div", {
+    className: "overflow-x-auto"
+  }, React.createElement("table", {
+    className: "w-full text-left min-w-[520px]"
+  }, React.createElement("thead", null, React.createElement("tr", {
+    className: "bg-slate-900/90 text-white"
+  }, React.createElement("th", {
+    className: "p-3 text-[10px] font-black uppercase tracking-widest"
+  }, "Venue"), venuesData.periodKeys.map(pk => React.createElement("th", {
+    key: pk,
+    className: "p-3 text-[10px] font-black uppercase tracking-widest"
+  }, pk)))), React.createElement("tbody", null, filteredVenues.map((v, vi) => React.createElement("tr", {
+    key: vi,
+    className: "border-b border-slate-50 last:border-0 hover:bg-slate-50/50"
+  }, React.createElement("td", {
+    className: "p-3 text-xs font-black text-indigo-600 align-top whitespace-nowrap"
+  }, v.venue), venuesData.periodKeys.map(pk => {
+    const val = v.periods[pk];
+    const isEmpty = !val || val.toUpperCase() === 'N/A';
+    return React.createElement("td", {
+      key: pk,
+      className: `p-3 text-xs align-top ${isEmpty ? 'text-slate-300 italic' : 'text-slate-700 font-medium'}`
+    }, isEmpty ? 'N/A' : val);
+  }))))))) : React.createElement("p", {
+    className: "text-center py-8 text-slate-400 text-xs font-bold italic"
+  }, "No venues found")), activeTab === 'campFire' && React.createElement("div", {
+    className: "space-y-4 animate-fade-in"
+  }, React.createElement("div", {
+    className: "bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm"
+  }, React.createElement("h2", {
+    className: "text-xl font-black text-slate-800 mb-1 whimsical-font italic"
+  }, "Camp Fire"), React.createElement("p", {
+    className: "text-xs text-slate-400 font-medium"
+  }, "Staff assigned to each location.")), campFire.length > 0 ? React.createElement("div", {
+    className: "bg-white/70 backdrop-blur-md rounded-[2rem] border border-white shadow-sm overflow-hidden divide-y divide-slate-50"
+  }, campFire.map((cf, cfi) => React.createElement("div", {
+    key: cfi,
+    className: "px-6 py-4"
+  }, React.createElement("div", {
+    className: "flex items-center gap-2.5 mb-2.5"
+  }, React.createElement(Icon, {
+    name: "map-pin",
+    size: 16,
+    className: "text-amber-500"
+  }), React.createElement("span", {
+    className: "text-sm font-black text-slate-800"
+  }, cf.location)), cf.staff.length > 0 ? React.createElement("div", {
+    className: "flex flex-wrap gap-2"
+  }, cf.staff.map((name, ni) => {
+    const person = findStaffByDisplayName(name);
+    return person ? React.createElement("button", {
+      key: ni,
+      onClick: () => goToStaffMember(person),
+      className: "text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-full px-3 py-1.5 flex items-center gap-1 hover:bg-indigo-100"
+    }, name, React.createElement(Icon, {
+      name: "chevron-right",
+      size: 12
+    })) : React.createElement("span", {
+      key: ni,
+      className: "text-xs font-bold text-slate-700 bg-slate-50 border border-slate-100 rounded-full px-3 py-1.5"
+    }, name);
+  })) : React.createElement("p", {
+    className: "text-xs text-slate-300 italic font-medium"
+  }, "No staff assigned to this location.")))) : React.createElement("p", {
+    className: "text-center py-8 text-slate-400 text-xs font-bold italic"
+  }, "No camp fire assignments available")), activeTab === 'photos' && React.createElement("div", {
+    className: "space-y-4 animate-fade-in"
+  }, React.createElement("div", {
+    className: "bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm"
+  }, React.createElement("h2", {
+    className: "text-xl font-black text-slate-800 mb-1 whimsical-font italic"
+  }, "Photos"), React.createElement("p", {
+    className: "text-xs text-slate-400 font-medium"
+  }, "Pick your class, then tap a student to add a photo of their work. It shows up in that grade's slide deck automatically.")), React.createElement("input", {
+    ref: photoFileInputRef,
+    type: "file",
+    accept: "image/*",
+    className: "hidden",
+    onChange: handlePhotoFileSelected
+  }), React.createElement("div", {
+    className: "grid grid-cols-4 gap-1.5"
+  }, ['S1', 'S2', 'S3', 'S4'].map(p => React.createElement("button", {
+    key: p,
+    onClick: () => {
+      setPhotoPeriod(p);
+      setPhotoClassName('');
+      setPhotoRoster([]);
+      setPhotoRosterError('');
+    },
+    className: `py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${photoPeriod === p ? 'bg-indigo-600 text-white shadow-md' : 'bg-white/70 text-slate-400 border border-white'}`
+  }, p))), React.createElement("select", {
+    className: "w-full bg-white/70 backdrop-blur-sm border border-white p-4 rounded-3xl shadow-sm outline-none font-bold text-sm text-slate-700",
+    value: photoClassName,
+    onChange: e => setPhotoClassName(e.target.value)
+  }, React.createElement("option", {
+    value: ""
+  }, "Select a class..."), (classes[photoPeriod] || []).filter(c => ART_CLASS_NAMES.includes(c)).map((c, i) => React.createElement("option", {
+    key: i,
+    value: c
+  }, c))), photoUploadError && React.createElement("div", {
+    className: "bg-rose-50 border border-rose-200 text-rose-600 text-xs font-bold p-3 rounded-2xl flex items-center gap-2 animate-fade-in"
+  }, React.createElement(Icon, {
+    name: "alert-triangle",
+    size: 16
+  }), React.createElement("span", null, photoUploadError)), photoRosterLoading && React.createElement("p", {
+    className: "text-center py-8 text-slate-400 text-xs font-bold italic"
+  }, "Loading class..."), !photoRosterLoading && photoRosterError && React.createElement("p", {
+    className: "text-center py-8 text-rose-400 text-xs font-bold italic"
+  }, photoRosterError), !photoRosterLoading && !photoRosterError && photoClassName && (photoRoster.length > 0 ? React.createElement("div", {
+    className: "bg-white/70 backdrop-blur-md rounded-[2rem] border border-white shadow-sm overflow-hidden divide-y divide-slate-100"
+  }, photoRoster.map(student => {
+    const count = student.photoCount || 0;
+    const isFull = count >= PHOTOS_PER_PANEL_MAX;
+    const isUploading = photoUploadingKey === student.stuNum;
+    return React.createElement("button", {
+      key: student.stuNum,
+      onClick: () => openPhotoPicker(student),
+      disabled: isUploading,
+      className: "w-full text-left px-6 py-3.5 flex items-center justify-between hover:bg-slate-50/70 disabled:opacity-60"
+    }, React.createElement("div", null, React.createElement("div", {
+      className: "text-sm font-bold text-slate-800"
+    }, student.preferredName), React.createElement("div", {
+      className: "text-[10px] font-bold text-slate-400 uppercase tracking-widest"
+    }, "Grade ", student.grade)), isUploading ? React.createElement(Icon, {
+      name: "loader",
+      size: 18,
+      className: "text-indigo-400 animate-spin"
+    }) : count > 0 ? React.createElement("div", {
+      className: `flex items-center gap-1.5 ${isFull ? 'text-slate-400' : 'text-emerald-500'}`,
+      title: isFull ? `${count} photo${count === 1 ? '' : 's'} added — panel full` : `${count} photo${count === 1 ? '' : 's'} added`
+    }, React.createElement(Icon, {
+      name: "check-circle",
+      size: 18
+    }), React.createElement("span", {
+      className: "text-[10px] font-black"
+    }, count), isFull && React.createElement("span", {
+      className: "text-[8px] font-black uppercase tracking-widest"
+    }, "Full")) : React.createElement(Icon, {
+      name: "camera",
+      size: 18,
+      className: "text-indigo-400"
+    }));
+  })) : React.createElement("p", {
+    className: "text-center py-8 text-slate-400 text-xs font-bold italic"
+  }, "No students found in this class"))), activeTab === 'diacSong' && React.createElement("div", {
+    className: "space-y-4 animate-fade-in"
+  }, React.createElement("div", {
+    className: "bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm"
+  }, React.createElement("h2", {
+    className: "text-xl font-black text-slate-800 mb-1 whimsical-font italic"
+  }, "DIAC Song"), React.createElement("p", {
+    className: "text-xs text-slate-400 font-medium"
+  }, "\"It Must Be At DIAC\" — chords & lyrics.")), React.createElement("div", {
+    className: "bg-white/70 backdrop-blur-md rounded-[2rem] border border-white shadow-sm p-6 space-y-6"
+  }, DIAC_SONG_SECTIONS.map((section, si) => React.createElement("div", {
+    key: si,
+    className: "space-y-3"
+  }, section.map((line, li) => React.createElement("pre", {
+    key: li,
+    className: "font-mono text-[11px] sm:text-xs leading-snug whitespace-pre overflow-x-auto"
+  }, React.createElement("span", {
+    className: "text-indigo-600 font-black"
+  }, line.chords), '\n', React.createElement("span", {
+    className: "text-slate-700 font-semibold"
+  }, line.lyric)))))), React.createElement("div", {
+    className: "bg-white/70 backdrop-blur-md rounded-[2rem] border border-white shadow-sm p-6 text-center text-xs text-slate-400 font-medium"
+  }, "Guitar & ukulele chord charts coming soon."), React.createElement("a", {
+    href: "https://docs.google.com/document/d/1Dv1hujHLoVfDGDSK7r8cwKt-ZlfUqrsjsR7DDsrYQGY/edit?usp=sharing",
+    target: "_blank",
+    rel: "noopener noreferrer",
+    className: "flex items-center justify-center gap-2 text-xs font-bold text-indigo-500"
+  }, React.createElement(Icon, {
+    name: "external-link",
+    size: 14
+  }), "View original doc")), activeTab === 'staffFinder' && React.createElement("div", {
+    className: "space-y-4 animate-fade-in"
+  }, React.createElement("div", {
+    className: "bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm"
+  }, React.createElement("h2", {
+    className: "text-xl font-black text-slate-800 mb-1 whimsical-font italic"
+  }, "Staff Finder"), React.createElement("p", {
+    className: "text-xs text-slate-400 font-medium"
+  }, "Pick a staff member to see where they are now and their schedule for any day.")), React.createElement("div", {
+    className: "relative"
+  }, React.createElement(Icon, {
+    name: "search",
+    size: 18,
+    className: "absolute left-4 top-1/2 -translate-y-1/2 text-slate-300"
+  }), React.createElement("input", {
+    type: "text",
+    placeholder: "Search staff by name...",
+    className: "w-full bg-white/70 backdrop-blur-sm border border-white p-4 pl-12 pr-12 rounded-3xl shadow-sm outline-none font-medium text-sm",
+    value: staffPickerQuery,
+    onChange: e => {
+      setStaffPickerQuery(e.target.value);
+      setSelectedStaffIndex(null);
+    }
+  }), staffPickerQuery && React.createElement("button", {
+    onClick: () => setStaffPickerQuery(''),
+    className: "absolute right-4 top-1/2 -translate-y-1/2 text-slate-300"
+  }, React.createElement(Icon, {
+    name: "x",
+    size: 18
+  }))), !selectedStaffPerson && React.createElement("div", {
+    className: "bg-white/70 backdrop-blur-md rounded-[2rem] border border-white shadow-sm overflow-hidden divide-y divide-slate-100 max-h-[420px] overflow-y-auto"
+  }, filteredStaffRoster.length > 0 ? filteredStaffRoster.map(person => React.createElement("button", {
+    key: person.name + person.abbrev,
+    onClick: () => setSelectedStaffIndex(staffRoster.indexOf(person)),
+    className: "w-full text-left px-6 py-3 flex items-center justify-between hover:bg-slate-50/70"
+  }, React.createElement("div", {
+    className: "flex items-center gap-3"
+  }, React.createElement("div", {
+    className: "w-9 h-9 rounded-full bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden shrink-0"
+  }, person.photoId ? React.createElement("img", {
+    src: getDirectDriveUrl(person.photoId),
+    className: "w-full h-full object-cover"
+  }) : React.createElement(Icon, {
+    name: "user",
+    size: 16,
+    className: "text-slate-200"
+  })), React.createElement("span", {
+    className: "text-sm font-bold text-slate-800"
+  }, person.name)), person.isHoc && React.createElement("span", {
+    className: "text-[9px] font-black text-indigo-600 uppercase tracking-widest"
+  }, "HOC"))) : React.createElement("p", {
+    className: "text-center py-8 text-slate-400 text-xs font-bold italic"
+  }, "No staff found for \"", staffPickerQuery, "\"")), selectedStaffPerson && React.createElement("div", {
+    className: "space-y-4"
+  }, React.createElement("button", {
+    onClick: () => setSelectedStaffIndex(null),
+    className: "flex items-center gap-1 text-[10px] font-black text-indigo-600 uppercase tracking-widest"
+  }, React.createElement(Icon, {
+    name: "chevron-left",
+    size: 14
+  }), " Back to staff list"), React.createElement("div", {
+    className: "bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm flex items-center gap-4"
+  }, React.createElement("div", {
+    className: "w-16 h-16 rounded-2xl bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden shrink-0"
+  }, selectedStaffPerson.photoId ? React.createElement("img", {
+    src: getDirectDriveUrl(selectedStaffPerson.photoId),
+    className: "w-full h-full object-cover"
+  }) : React.createElement(Icon, {
+    name: "user",
+    size: 28,
+    className: "text-slate-200"
+  })), React.createElement("div", null, React.createElement("h3", {
+    className: "text-lg font-black text-slate-800"
+  }, selectedStaffPerson.name), selectedStaffPerson.isHoc && React.createElement("span", {
+    className: "text-[9px] font-black text-indigo-600 uppercase tracking-widest"
+  }, "Head of Camp"))), React.createElement("div", {
+    className: "bg-slate-900/90 text-white p-6 rounded-[2rem] shadow-sm"
+  }, React.createElement("div", {
+    className: "text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2"
+  }, "Right Now"), whereAreTheyNow && whereAreTheyNow.type === 'duty' && React.createElement(React.Fragment, null, React.createElement("div", {
+    className: "text-lg font-black"
+  }, "On Duty: ", whereAreTheyNow.label), React.createElement("div", {
+    className: "text-xs text-slate-300 font-medium mt-1"
+  }, whereAreTheyNow.where, " · ", whereAreTheyNow.time)), whereAreTheyNow && whereAreTheyNow.type === 'class' && React.createElement(React.Fragment, null, React.createElement("div", {
+    className: "text-lg font-black"
+  }, "S", whereAreTheyNow.session, ": ", whereAreTheyNow.label), whereAreTheyNow.where && React.createElement("div", {
+    className: "text-xs text-slate-300 font-medium mt-1"
+  }, whereAreTheyNow.where)), whereAreTheyNow && whereAreTheyNow.type === 'free' && React.createElement("div", {
+    className: "text-lg font-black"
+  }, "Nothing scheduled right now (S", whereAreTheyNow.session, ")")), React.createElement("div", {
+    className: "bg-white/70 backdrop-blur-md p-6 rounded-[2rem] border border-white shadow-sm"
+  }, React.createElement("div", {
+    className: "flex items-center justify-between mb-4"
+  }, React.createElement("h3", {
+    className: "text-sm font-black text-slate-800"
+  }, "Schedule"), React.createElement("input", {
+    type: "date",
+    className: "bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 outline-none",
+    value: staffFinderDate,
+    onChange: e => setStaffFinderDate(e.target.value)
+  })), React.createElement("p", {
+    className: "text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-3"
+  }, "Periods (same each day this week)"), React.createElement("div", {
+    className: "grid grid-cols-2 gap-2 mb-5"
+  }, ['1', '2', '3', '4'].map(s => {
+    const sched = staffScheduleForDate && staffScheduleForDate.classes['S' + s];
+    return React.createElement("div", {
+      key: s,
+      className: "bg-slate-50 rounded-2xl p-3 border border-slate-100"
+    }, React.createElement("div", {
+      className: "text-[9px] font-black text-indigo-600 uppercase tracking-widest"
+    }, "Session ", s), sched ? React.createElement(React.Fragment, null, React.createElement("div", {
+      className: "text-xs font-bold text-slate-800 mt-1"
+    }, sched.activity), sched.venue && React.createElement("div", {
+      className: "text-[10px] text-slate-400 font-medium"
+    }, sched.venue)) : React.createElement("div", {
+      className: "text-xs text-slate-300 italic mt-1"
+    }, "Free"));
+  })), React.createElement("p", {
+    className: "text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-3"
+  }, "Duty — ", staffScheduleForDate ? staffScheduleForDate.dayKey : ''), staffScheduleForDate && staffScheduleForDate.duty.length > 0 ? React.createElement("div", {
+    className: "space-y-2"
+  }, staffScheduleForDate.duty.map((entry, di) => React.createElement("div", {
+    key: di,
+    className: "bg-slate-50 rounded-2xl p-3 border border-slate-100"
+  }, React.createElement("div", {
+    className: "flex items-center justify-between"
+  }, React.createElement("span", {
+    className: "text-xs font-bold text-slate-800"
+  }, entry.duty), React.createElement("span", {
+    className: "text-[10px] font-black text-indigo-600 uppercase tracking-widest"
+  }, entry.time)), React.createElement("div", {
+    className: "text-[10px] text-slate-400 font-bold uppercase mt-1"
+  }, entry.where)))) : React.createElement("p", {
+    className: "text-xs text-slate-300 italic"
+  }, "No duty scheduled that day"))))), React.createElement("div", {
+    className: "fixed bottom-0 left-0 w-full p-4 bg-gradient-to-t from-slate-50 to-transparent pointer-events-none"
+  }), React.createElement("div", {
+    className: "fixed bottom-4 right-4 z-50 pointer-events-auto"
+  }, React.createElement("button", {
+    onClick: logout,
+    className: "bg-white/80 backdrop-blur-md p-3 rounded-full shadow-lg border border-slate-200 text-rose-500 hover:bg-rose-50 transition-colors"
+  }, React.createElement(Icon, {
+    name: "log-out",
+    size: 18
+  }))));
 }
-
-function getSheetData(name) {
-  const sheet = SS.getSheetByName(name);
-  if (!sheet) return [];
-  const data = sheet.getDataRange().getValues();
-  const headers = data[0];
-  return data.slice(1).map(row => {
-    let obj = {};
-    headers.forEach((h, i) => obj[h] = row[i]);
-    return obj;
-  });
-}
-
-function formatDate(date) {
-  if (!date) return "";
-  try {
-    const d = new Date(date);
-    if (isNaN(d.getTime())) return date;
-    return Utilities.formatDate(d, Session.getScriptTimeZone(), "MMM dd, yyyy");
-  } catch (e) { return date; }
-}
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(React.createElement(ErrorBoundary, null, React.createElement(App, null)));
+    </script>
+</body>
+</html>
