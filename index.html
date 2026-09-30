@@ -69,7 +69,7 @@
       the Home Screen icon.
     -->
     <script>
-      var APP_VERSION = "2026-09-30T17:35:36Z";
+      var APP_VERSION = "2026-09-30T18:33:16Z";
 
       function checkForUpdate() {
         fetch('version.json', { cache: 'no-store' })
@@ -366,12 +366,14 @@ class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
     this.state = {
-      hasError: false
+      hasError: false,
+      errorText: ''
     };
   }
-  static getDerivedStateFromError() {
+  static getDerivedStateFromError(error) {
     return {
-      hasError: true
+      hasError: true,
+      errorText: (error && (error.stack || error.message || String(error))) || 'Unknown error'
     };
   }
   componentDidCatch(error, info) {
@@ -394,7 +396,13 @@ class ErrorBoundary extends React.Component {
       }, "You're still signed in, so tapping below will take you right back — no need to sign in again."), React.createElement("button", {
         onClick: () => window.location.reload(),
         className: "w-full bg-indigo-600 text-white text-xs font-black uppercase tracking-widest py-3 rounded-xl"
-      }, "Continue")));
+      }, "Continue"),
+      // Diagnostic detail — not pretty on purpose. If this shows up,
+      // screenshot it and send it along so the actual cause can be found
+      // instead of guessing at it blind.
+      React.createElement("pre", {
+        className: "text-left text-[9px] text-slate-400 bg-slate-50 rounded-lg p-2 overflow-x-auto whitespace-pre-wrap break-words max-h-32 overflow-y-auto"
+      }, this.state.errorText)));
     }
     return this.props.children;
   }
