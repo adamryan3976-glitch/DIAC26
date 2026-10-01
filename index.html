@@ -69,7 +69,7 @@
       the Home Screen icon.
     -->
     <script>
-      var APP_VERSION = "2026-09-30T21:12:40Z";
+      var APP_VERSION = "2026-10-01T13:17:42Z";
 
       function checkForUpdate() {
         fetch('version.json', { cache: 'no-store' })
@@ -1235,7 +1235,6 @@ function App() {
   };
   const activeHocAbsences = absences.filter(a => String(a.session) === String(hocSession) && new Date(a.timestamp).toDateString() === new Date().toDateString() && a.status !== 'Present').sort((a, b) => (HOC_STATUS_PRIORITY[a.status] ?? 99) - (HOC_STATUS_PRIORITY[b.status] ?? 99));
   const submittedActivitiesThisSession = new Set(absences.filter(a => String(a.session) === String(hocSession) && new Date(a.timestamp).toDateString() === new Date().toDateString()).map(a => a.activity));
-  const missingAttendanceClasses = (classes[`S${hocSession}`] || []).filter(c => !submittedActivitiesThisSession.has(c));
   const recentReportsList = [...absences].filter(a => a.status !== 'Present').reverse().slice(0, 10);
   if (selectedStudent) return React.createElement("div", {
     className: "min-h-screen bg-transparent animate-fade-in pb-12"
@@ -1491,22 +1490,23 @@ function App() {
     key: num,
     onClick: () => setHocSession(num.toString()),
     className: `flex-1 min-w-[60px] py-2 rounded-xl text-[10px] font-black border transition-all ${hocSession === num.toString() ? 'bg-indigo-600 border-indigo-600 text-white shadow-md' : 'bg-slate-50 border-slate-100 text-slate-400'}`
-  }, "S", num)))), missingAttendanceClasses.length > 0 && React.createElement("div", {
-    className: "bg-amber-50 border border-amber-200 rounded-[2rem] p-5 animate-fade-in"
-  }, React.createElement("div", {
-    className: "flex items-center gap-2 mb-2"
-  }, React.createElement(Icon, {
-    name: "alert-triangle",
-    size: 16,
-    className: "text-amber-600"
-  }), React.createElement("h3", {
-    className: "text-xs font-black text-amber-700 uppercase tracking-widest"
-  }, "Attendance Not Yet Submitted — S", hocSession)), React.createElement("div", {
+  }, "S", num)))), (classes[`S${hocSession}`] || []).length > 0 && React.createElement("div", {
+    className: "bg-white/70 backdrop-blur-md border border-white rounded-[2rem] p-5 shadow-sm animate-fade-in"
+  }, React.createElement("h3", {
+    className: "text-xs font-black text-slate-500 uppercase tracking-widest mb-3"
+  }, "Attendance Status — S", hocSession), React.createElement("div", {
     className: "flex flex-wrap gap-2"
-  }, missingAttendanceClasses.map((c, i) => React.createElement("span", {
-    key: i,
-    className: "px-3 py-1.5 bg-white/80 text-amber-700 rounded-full text-xs font-bold border border-amber-200"
-  }, c)))), React.createElement("div", {
+  }, (classes[`S${hocSession}`] || []).map((c, i) => {
+    const submitted = submittedActivitiesThisSession.has(c);
+    return React.createElement("span", {
+      key: i,
+      className: `flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border ${submitted ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-50 text-slate-500 border-slate-200'}`
+    }, submitted && React.createElement(Icon, {
+      name: "check-circle",
+      size: 13,
+      className: "text-emerald-600"
+    }), c);
+  }))), React.createElement("div", {
     className: "space-y-3"
   }, activeHocAbsences.map((a, i) => {
     const currentNote = hocNotes[a.id] !== undefined ? hocNotes[a.id] : a.note || a.Note || a.Notes || a.notes || "";
