@@ -69,7 +69,7 @@
       the Home Screen icon.
     -->
     <script>
-      var APP_VERSION = "2026-10-01T13:17:42Z";
+      var APP_VERSION = "2026-10-04T16:40:57Z";
 
       function checkForUpdate() {
         fetch('version.json', { cache: 'no-store' })
@@ -169,6 +169,20 @@ const {
 } = React;
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyLa9VEQWwPR_yTU50r09f-X_PHMyOxFV4cOqyuZvLOuu861OiTfwrsp8a6Z6RnYOre/exec";
 const APP_LOGO_URL = "https://raw.githubusercontent.com/adamryan3976-glitch/DIAC26/main/diaclogo.png";
+
+// Set to false to reopen the app for everyone again (e.g. right before
+// DIAC 2027 starts). While true, everyone sees APP_SHUTDOWN_MESSAGE
+// instead of the sign-in screen.
+const APP_SHUTDOWN = true;
+const APP_SHUTDOWN_MESSAGE = "DIAC 2026 was an amazing week of arts, community and fun, but it is now complete and as we prepare for DIAC 2027, this app will be shut down. It will reemerge like the Phoenix from the ashes for DIAC 2027!";
+// Visiting the site once with ?reopen=<this code> in the URL unlocks the
+// real sign-in screen again, remembered after that via localStorage (no
+// need to re-enter it every visit). This isn't real security — it's
+// visible to anyone who reads this file's source — it just hides the
+// sign-in screen from everyone else while the app is shut down. Actual
+// access stays protected exactly the way it always was: real Google
+// sign-in, checked against the staff list on the server.
+const SHUTDOWN_BYPASS_CODE = "phoenix27-r7k2m9";
 const PAGE_SIZE = 100;
 const GOOGLE_CLIENT_ID = "241712157669-1huukafbcpsifc4v35op6o80qjb10r0r.apps.googleusercontent.com";
 const TAB_LABELS = {
@@ -426,6 +440,29 @@ class ErrorBoundary extends React.Component {
   }
 }
 function App() {
+  const [shutdownBypass, setShutdownBypass] = useState(false);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem('diac_shutdown_bypass') === '1') {
+        setShutdownBypass(true);
+      }
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get('reopen');
+      if (code && code === SHUTDOWN_BYPASS_CODE) {
+        localStorage.setItem('diac_shutdown_bypass', '1');
+        setShutdownBypass(true);
+        // Strip the code back out of the visible URL once it's unlocked
+        // and remembered, so it doesn't linger in the address bar.
+        params.delete('reopen');
+        const newSearch = params.toString();
+        const newUrl = window.location.pathname + (newSearch ? '?' + newSearch : '') + window.location.hash;
+        window.history.replaceState({}, '', newUrl);
+      }
+    } catch (e) {
+      // localStorage unavailable (private browsing, etc.) — the URL code
+      // still works each time, it just won't be remembered between visits.
+    }
+  }, []);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isHoc, setIsHoc] = useState(false);
   const [currentUser, setCurrentUser] = useState('');
@@ -1204,6 +1241,19 @@ function App() {
   }), React.createElement("p", {
     className: "whimsical-font text-slate-400 font-bold uppercase text-[10px] tracking-widest"
   }, "DIAC HUB LOADING..."));
+  if (APP_SHUTDOWN && !shutdownBypass) return React.createElement("div", {
+    className: "min-h-screen flex items-center justify-center p-6 bg-transparent relative z-10"
+  }, React.createElement("div", {
+    className: "w-full max-w-sm space-y-5 animate-fade-in bg-white/80 backdrop-blur-xl p-8 rounded-3xl shadow-xl border border-white/50 text-center"
+  }, React.createElement("img", {
+    src: APP_LOGO_URL,
+    className: "w-20 mx-auto mb-2"
+  }), React.createElement("h1", {
+    className: "text-2xl font-black text-indigo-600 whimsical-font italic uppercase"
+  }, "DIAC HUB"), React.createElement("p", {
+    className: "text-sm text-slate-600 font-medium leading-relaxed"
+  }, APP_SHUTDOWN_MESSAGE)));
+
   if (!isAuthenticated) return React.createElement("div", {
     className: "min-h-screen flex items-center justify-center p-6 bg-transparent relative z-10"
   }, React.createElement("div", {
